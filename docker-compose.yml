@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  registry:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      REGISTRY_NAME: "My Agent Registry"
+      REGISTRY_URL: "http://localhost:3000"
+      DB_PATH: /data/registry.db
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-voyage-3}
+      EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OLLAMA_URL: ${OLLAMA_URL:-http://localhost:11434}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      HEALTH_CHECK_INTERVAL: 300000
+    volumes:
+      - registry_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  registry_data:

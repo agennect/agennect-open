@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>agennect-open — Registry</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='10' fill='%2300ff88'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/dashboard/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">agennect-open</span>
+      <span class="brand-tag">A2A · MCP registry</span>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="agents">Agents</button>
+      <button class="tab" data-tab="mcp">MCP Servers</button>
+      <button class="tab" data-tab="health">Health</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- OVERVIEW -->
+    <section id="tab-overview" class="panel active">
+      <div class="cards" id="cards"></div>
+      <div class="block">
+        <h2>Top agents (24h)</h2>
+        <table class="data" id="topAgentsTable">
+          <thead>
+            <tr><th>Name</th><th>ID</th><th>Invocations 24h</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- AGENTS -->
+    <section id="tab-agents" class="panel">
+      <div class="toolbar">
+        <input type="text" id="agentSearch" placeholder="Semantic search: e.g. data governance, pipeline monitoring" />
+        <button id="agentSearchBtn">Search</button>
+        <button id="agentClearBtn" class="ghost">Clear</button>
+        <button id="agentAddBtn" class="primary admin-only" hidden>+ Add agent</button>
+      </div>
+      <table class="data" id="agentsTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Provider</th>
+            <th>Protocols</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>Inv/24h</th>
+            <th>Latency</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- MCP -->
+    <section id="tab-mcp" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">MCP Server Directory</h2>
+        <button id="mcpAddBtn" class="primary admin-only" hidden>+ Add MCP server</button>
+      </div>
+      <table class="data" id="mcpTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Transport</th>
+            <th>Category</th>
+            <th>Tools</th>
+            <th>Author</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- HEALTH -->
+    <section id="tab-health" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">Per-agent health (24h)</h2>
+      </div>
+      <div id="healthList"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="panel">
+      <div class="block">
+        <h2>Admin token</h2>
+        <p class="hint">
+          Paste the raw value of <code>ADMIN_TOKEN</code> from your <code>.env</code>
+          (default: <code>change-me-before-deploy</code>). Do <strong>not</strong>
+          include the word "Bearer" — the dashboard adds it for you.
+          Stored only in your browser's localStorage.
+        </p>
+        <div class="settings-row">
+          <input type="password" id="adminTokenInput" placeholder="raw ADMIN_TOKEN value" autocomplete="off" />
+          <button id="saveTokenBtn" class="primary">Save</button>
+          <button id="testTokenBtn" class="ghost">Test</button>
+          <button id="clearTokenBtn" class="ghost">Clear</button>
+        </div>
+        <p id="tokenStatus" class="hint"></p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Agent modal (add + edit) -->
+  <div class="modal" id="agentModal" hidden>
+    <div class="modal-inner">
+      <h2 id="agentModalTitle">Register a new agent</h2>
+      <form id="agentForm">
+        <input type="hidden" name="id" />
+        <label>Name *<input name="name" required /></label>
+        <label>Description * (min 20 chars)<textarea name="description" required></textarea></label>
+        <label>Provider *<input name="provider" required /></label>
+        <label>Endpoint URL<input name="endpoint_url" type="url" /></label>
+        <label>Protocols (comma-separated, default A2A)<input name="protocols" placeholder="A2A,MCP" /></label>
+        <label>Capabilities (comma-separated)<input name="capabilities" placeholder="EDA, SQL, Visualization" /></label>
+        <label>Hosting
+          <select name="hosting">
+            <option value="referenced">referenced</option>
+            <option value="hosted">hosted</option>
+          </select>
+        </label>
+        <label>Auth type
+          <select name="auth_type">
+            <option value="none">none</option>
+            <option value="apikey">apikey</option>
+            <option value="oauth">oauth</option>
+          </select>
+        </label>
+        <label class="edit-only" hidden>Status
+          <select name="status">
+            <option value="active">active</option>
+            <option value="degraded">degraded</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close-modal="agentModal">Cancel</button>
+          <button type="submit" class="primary" id="agentSubmitBtn">Create</button>
+        </div>
+        <p id="agentFormError" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- MCP server modal (add + edit) -->
+  <div class="modal" id="mcpModal" hidden>
+    <div class="modal-inner">
+      <h2 id="mcpModalTitle">Register a new MCP server</h2>
+      <form id="mcpForm">
+        <input type="hidden" name="id" />
+        <label>Name *<input name="name" required /></label>
+        <label>Description *<textarea name="description" required></textarea></label>
+        <label>Transport *
+          <select name="transport" required>
+            <option value="http">http</option>
+            <option value="stdio">stdio</option>
+            <option value="sse">sse</option>
+          </select>
+        </label>
+        <label>Category<input name="category" placeholder="data, devtools, search…" /></label>
+        <label>Author<input name="author" /></label>
+        <label>Config URL<input name="config_url" type="url" /></label>
+        <label>Package URL<input name="package_url" type="url" /></label>
+        <label>Tools (JSON array, e.g. [{"name":"query","description":"…"}])<textarea name="tools" placeholder="[]"></textarea></label>
+        <label class="edit-only" hidden>Status
+          <select name="status">
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close-modal="mcpModal">Cancel</button>
+          <button type="submit" class="primary" id="mcpSubmitBtn">Create</button>
+        </div>
+        <p id="mcpFormError" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/dashboard/app.js"></script>
+</body>
+</html>
