@@ -4,6 +4,8 @@ Self-hosted A2A (Agent-to-Agent) registry with an MCP (Model Context Protocol)
 server directory. Runs as a single Docker container, persists to SQLite,
 and ships a vanilla HTML dashboard.
 
+![agennect-open dashboard](docs/img/dashboard.png)
+
 This is the open-source core of [Agennect](https://agennect.com). Use it to
 publish, discover, and proxy agents that speak Google's A2A protocol, and to
 maintain a directory of MCP servers your agents can call.

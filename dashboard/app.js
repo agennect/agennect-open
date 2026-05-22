@@ -1,3 +1,12 @@
+console.log('[dashboard] app.js loaded');
+
+window.addEventListener('error', (e) => {
+  console.error('[dashboard] uncaught error:', e.message, 'at', e.filename + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[dashboard] unhandled rejection:', e.reason);
+});
+
 const TOKEN_KEY = 'agennect_admin_token';
 
 function getToken() {
@@ -5,9 +14,16 @@ function getToken() {
 }
 
 function setToken(t) {
-  if (t) localStorage.setItem(TOKEN_KEY, t);
+  // Strip an accidentally-pasted "Bearer " prefix — the api() helper adds it.
+  const cleaned = (t || '').replace(/^Bearer\s+/i, '').trim();
+  if (cleaned) localStorage.setItem(TOKEN_KEY, cleaned);
   else localStorage.removeItem(TOKEN_KEY);
   updateAdminUI();
+  // Tables embed per-row admin buttons at render time, so re-fetch them
+  // whenever admin state flips.
+  loadAgents();
+  loadMcp();
+  loadOverview();
 }
 
 function authHeaders() {
@@ -53,17 +69,31 @@ function escapeHtml(s) {
   }[c]));
 }
 
-// ─────────────────────────────────────── Tabs
+// ─────────────────────────────────────── Tabs (event delegation)
 
-document.querySelectorAll('.tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    const target = document.getElementById('tab-' + btn.dataset.tab);
-    if (target) target.classList.add('active');
-    if (btn.dataset.tab === 'health') loadHealth();
-  });
+const initialTabs = document.querySelectorAll('.tab');
+console.log('[dashboard] tabs found:', initialTabs.length);
+
+document.addEventListener('click', (e) => {
+  const tab = e.target && e.target.closest && e.target.closest('.tab');
+  if (!tab) return;
+  console.log('[dashboard] tab click:', tab.dataset.tab);
+
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  tab.classList.add('active');
+
+  const target = document.getElementById('tab-' + tab.dataset.tab);
+  if (target) {
+    target.classList.add('active');
+  } else {
+    console.warn('[dashboard] no panel for', tab.dataset.tab);
+  }
+
+  if (tab.dataset.tab === 'health') loadHealth();
+  if (tab.dataset.tab === 'agents') loadAgents();
+  if (tab.dataset.tab === 'mcp') loadMcp();
+  if (tab.dataset.tab === 'overview') loadOverview();
 });
 
 // ─────────────────────────────────────── Overview
@@ -137,15 +167,29 @@ async function loadAgents() {
           <td><span class="muted">—</span></td>
           <td>${inv}</td>
           <td>${latency}</td>
-          <td>
+          <td class="actions">
             <a href="/agents/${encodeURIComponent(a.id)}/.well-known/agent.json" target="_blank">Card</a>
             ${isAdmin()
-              ? `<button class="ghost" data-deactivate="${escapeHtml(a.id)}">Deactivate</button>`
+              ? `<button class="ghost" data-edit-agent="${escapeHtml(a.id)}">Edit</button>
+                 <button class="ghost" data-deactivate="${escapeHtml(a.id)}">Deactivate</button>`
               : ''}
           </td>
         </tr>`;
     }));
     tbody.innerHTML = rows.join('');
+
+    tbody.querySelectorAll('[data-edit-agent]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.editAgent;
+        try {
+          const agent = await api(`/agents/${encodeURIComponent(id)}`);
+          openAgentModal(agent);
+        } catch (e) {
+          console.error('Load agent for edit failed:', e.message);
+          alert('Could not load agent: ' + e.message);
+        }
+      });
+    });
 
     tbody.querySelectorAll('[data-deactivate]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -222,11 +266,13 @@ document.getElementById('agentClearBtn').addEventListener('click', () => {
 
 async function loadMcp() {
   const tbody = document.querySelector('#mcpTable tbody');
-  tbody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
   try {
-    const data = await api('/mcp?limit=100');
+    // Admins see inactive servers too, so they can reactivate them.
+    const query = isAdmin() ? '/mcp?limit=100&status=all' : '/mcp?limit=100';
+    const data = await api(query);
     if (!data.servers.length) {
-      tbody.innerHTML = `<tr><td colspan="6" class="muted">No MCP servers yet.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">No MCP servers yet.</td></tr>`;
       return;
     }
     tbody.innerHTML = data.servers.map(s => `
@@ -237,11 +283,47 @@ async function loadMcp() {
         <td>${(s.tools || []).length}</td>
         <td>${escapeHtml(s.author || '—')}</td>
         <td><span class="status-pill status-${escapeHtml(s.status)}">${escapeHtml(s.status)}</span></td>
+        <td class="actions">
+          ${isAdmin()
+            ? `<button class="ghost" data-edit-mcp="${escapeHtml(s.id)}">Edit</button>
+               ${s.status === 'active'
+                 ? `<button class="ghost" data-deactivate-mcp="${escapeHtml(s.id)}">Deactivate</button>`
+                 : ''}`
+            : '<span class="muted">—</span>'}
+        </td>
       </tr>
     `).join('');
+
+    tbody.querySelectorAll('[data-edit-mcp]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.editMcp;
+        try {
+          const server = await api(`/mcp/${encodeURIComponent(id)}`);
+          openMcpModal(server);
+        } catch (e) {
+          console.error('Load mcp for edit failed:', e.message);
+          alert('Could not load MCP server: ' + e.message);
+        }
+      });
+    });
+
+    tbody.querySelectorAll('[data-deactivate-mcp]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.deactivateMcp;
+        if (!confirm(`Deactivate MCP server ${id}?`)) return;
+        try {
+          await api(`/mcp/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          loadMcp();
+          loadOverview();
+        } catch (e) {
+          console.error('Deactivate MCP failed:', e.message);
+          alert('Deactivate failed: ' + e.message);
+        }
+      });
+    });
   } catch (e) {
     console.error('loadMcp failed:', e.message);
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">Error: ${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">Error: ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -280,22 +362,53 @@ async function loadHealth() {
   }
 }
 
-// ─────────────────────────────────────── Add agent modal
+// ─────────────────────────────────────── Modals (agent + MCP)
 
-const modal = document.getElementById('addAgentModal');
-document.getElementById('agentAddBtn').addEventListener('click', () => {
-  modal.hidden = false;
-});
-document.getElementById('cancelAddAgent').addEventListener('click', () => {
-  modal.hidden = true;
+// Generic "Cancel" hook for any modal that has [data-close-modal="modalId"]
+document.querySelectorAll('[data-close-modal]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const m = document.getElementById(btn.dataset.closeModal);
+    if (m) m.hidden = true;
+  });
 });
 
-document.getElementById('addAgentForm').addEventListener('submit', async (e) => {
+// ── Agent modal (add + edit) ────────────────────────────────────────────────
+
+const agentModal       = document.getElementById('agentModal');
+const agentForm        = document.getElementById('agentForm');
+const agentModalTitle  = document.getElementById('agentModalTitle');
+const agentSubmitBtn   = document.getElementById('agentSubmitBtn');
+const agentFormError   = document.getElementById('agentFormError');
+
+function openAgentModal(agent /* null = add */) {
+  agentFormError.textContent = '';
+  agentForm.reset();
+  agentForm.elements.id.value = agent?.id || '';
+  agentModalTitle.textContent = agent ? `Edit agent: ${agent.name}` : 'Register a new agent';
+  agentSubmitBtn.textContent = agent ? 'Save' : 'Create';
+  agentForm.querySelectorAll('.edit-only').forEach(el => { el.hidden = !agent; });
+
+  if (agent) {
+    agentForm.elements.name.value = agent.name || '';
+    agentForm.elements.description.value = agent.description || '';
+    agentForm.elements.provider.value = agent.provider || '';
+    agentForm.elements.endpoint_url.value = agent.endpoint_url || '';
+    agentForm.elements.protocols.value = (agent.protocols || []).join(', ');
+    agentForm.elements.capabilities.value = (agent.capabilities || []).join(', ');
+    agentForm.elements.hosting.value = agent.hosting || 'referenced';
+    agentForm.elements.auth_type.value = agent.auth_type || 'none';
+    if (agentForm.elements.status) agentForm.elements.status.value = agent.status || 'active';
+  }
+  agentModal.hidden = false;
+}
+
+document.getElementById('agentAddBtn').addEventListener('click', () => openAgentModal(null));
+
+agentForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const errBox = document.getElementById('addAgentError');
-  errBox.textContent = '';
-  const form = e.target;
-  const fd = new FormData(form);
+  agentFormError.textContent = '';
+  const fd = new FormData(agentForm);
+  const id = fd.get('id');
   const body = {
     name: fd.get('name'),
     description: fd.get('description'),
@@ -306,28 +419,151 @@ document.getElementById('addAgentForm').addEventListener('submit', async (e) => 
     hosting: fd.get('hosting'),
     auth_type: fd.get('auth_type')
   };
+  if (id) body.status = fd.get('status');
+
   try {
-    await api('/agents', { method: 'POST', body: JSON.stringify(body) });
-    modal.hidden = true;
-    form.reset();
+    if (id) {
+      await api(`/agents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/agents', { method: 'POST', body: JSON.stringify(body) });
+    }
+    agentModal.hidden = true;
+    agentForm.reset();
     loadAgents();
     loadOverview();
   } catch (err) {
-    console.error('Add agent failed:', err.message);
-    errBox.textContent = err.message;
+    console.error('Agent form submit failed:', err.message);
+    agentFormError.textContent = err.message;
+  }
+});
+
+// ── MCP modal (add + edit) ──────────────────────────────────────────────────
+
+const mcpModal      = document.getElementById('mcpModal');
+const mcpForm       = document.getElementById('mcpForm');
+const mcpModalTitle = document.getElementById('mcpModalTitle');
+const mcpSubmitBtn  = document.getElementById('mcpSubmitBtn');
+const mcpFormError  = document.getElementById('mcpFormError');
+
+function openMcpModal(server /* null = add */) {
+  mcpFormError.textContent = '';
+  mcpForm.reset();
+  mcpForm.elements.id.value = server?.id || '';
+  mcpModalTitle.textContent = server ? `Edit MCP server: ${server.name}` : 'Register a new MCP server';
+  mcpSubmitBtn.textContent = server ? 'Save' : 'Create';
+  mcpForm.querySelectorAll('.edit-only').forEach(el => { el.hidden = !server; });
+
+  if (server) {
+    mcpForm.elements.name.value = server.name || '';
+    mcpForm.elements.description.value = server.description || '';
+    mcpForm.elements.transport.value = server.transport || 'http';
+    mcpForm.elements.category.value = server.category || '';
+    mcpForm.elements.author.value = server.author || '';
+    mcpForm.elements.config_url.value = server.config_url || '';
+    mcpForm.elements.package_url.value = server.package_url || '';
+    mcpForm.elements.tools.value = JSON.stringify(server.tools || [], null, 2);
+    if (mcpForm.elements.status) mcpForm.elements.status.value = server.status || 'active';
+  } else {
+    mcpForm.elements.tools.value = '[]';
+  }
+  mcpModal.hidden = false;
+}
+
+document.getElementById('mcpAddBtn').addEventListener('click', () => openMcpModal(null));
+
+mcpForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  mcpFormError.textContent = '';
+  const fd = new FormData(mcpForm);
+  const id = fd.get('id');
+
+  let tools;
+  try {
+    tools = JSON.parse(fd.get('tools') || '[]');
+    if (!Array.isArray(tools)) throw new Error('tools must be a JSON array');
+  } catch (err) {
+    mcpFormError.textContent = 'Tools field must be a JSON array. ' + err.message;
+    return;
+  }
+
+  const body = {
+    name: fd.get('name'),
+    description: fd.get('description'),
+    transport: fd.get('transport'),
+    category: fd.get('category') || undefined,
+    author: fd.get('author') || undefined,
+    config_url: fd.get('config_url') || undefined,
+    package_url: fd.get('package_url') || undefined,
+    tools
+  };
+  if (id) body.status = fd.get('status');
+
+  try {
+    if (id) {
+      await api(`/mcp/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      await api('/mcp', { method: 'POST', body: JSON.stringify(body) });
+    }
+    mcpModal.hidden = true;
+    mcpForm.reset();
+    loadMcp();
+    loadOverview();
+  } catch (err) {
+    console.error('MCP form submit failed:', err.message);
+    mcpFormError.textContent = err.message;
   }
 });
 
 // ─────────────────────────────────────── Settings
 
 document.getElementById('saveTokenBtn').addEventListener('click', () => {
-  const v = document.getElementById('adminTokenInput').value.trim();
+  const input = document.getElementById('adminTokenInput');
+  const v = input.value.trim();
   setToken(v);
+  // Visible feedback that the click did something.
+  const status = document.getElementById('tokenStatus');
+  if (status) {
+    const original = status.textContent;
+    status.textContent = v ? '✓ Saved. Switch to Agents or MCP to use admin actions.' : '✗ Token cleared.';
+    setTimeout(() => { if (status.textContent !== original) updateAdminUI(); }, 2500);
+  }
+  input.value = '';
 });
 
 document.getElementById('clearTokenBtn').addEventListener('click', () => {
   document.getElementById('adminTokenInput').value = '';
   setToken('');
+  const status = document.getElementById('tokenStatus');
+  if (status) status.textContent = '✗ Token cleared.';
+});
+
+document.getElementById('testTokenBtn').addEventListener('click', async () => {
+  const status = document.getElementById('tokenStatus');
+  if (!isAdmin()) {
+    status.textContent = '✗ No token saved. Paste it and click Save first.';
+    return;
+  }
+  status.textContent = 'Testing…';
+  // Use an admin-only endpoint that doesn't mutate anything.
+  // PUT /agents/__nonexistent__ with admin = 404; without admin = 401.
+  try {
+    const res = await fetch('/agents/__token_probe__', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: '{}',
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.status === 401) {
+      status.textContent = '✗ Token rejected. The server expects a different value (check the ADMIN_TOKEN your server was started with).';
+    } else if (res.status === 404) {
+      status.textContent = '✓ Token accepted. Admin actions enabled.';
+    } else {
+      status.textContent = `? Server returned ${res.status}. Token probably ok, but unexpected response.`;
+    }
+  } catch (e) {
+    console.error('Token test failed:', e.message);
+    status.textContent = '✗ Test failed: ' + e.message;
+  }
 });
 
 // ─────────────────────────────────────── Init

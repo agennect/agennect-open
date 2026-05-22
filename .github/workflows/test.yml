@@ -1,0 +1,67 @@
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start registry in background
+        run: |
+          mkdir -p data
+          npm start > server.log 2>&1 &
+          echo $! > server.pid
+        env:
+          # Test admin token; not a real secret.
+          ADMIN_TOKEN: ci-test-token
+          # Skip background health-check loop during tests.
+          HEALTH_CHECK_INTERVAL: '999999999'
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "server up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server failed to start"
+          cat server.log
+          exit 1
+
+      - name: Run integration tests
+        run: npm test
+        env:
+          ADMIN_TOKEN: ci-test-token
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" || true
+          fi
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log

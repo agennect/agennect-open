@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>agennect-open — Registry</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='10' fill='%2300ff88'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/dashboard/style.css" />
 </head>
 <body>
   <header class="topbar">
@@ -66,6 +67,7 @@
     <section id="tab-mcp" class="panel">
       <div class="toolbar">
         <h2 class="title-inline">MCP Server Directory</h2>
+        <button id="mcpAddBtn" class="primary admin-only" hidden>+ Add MCP server</button>
       </div>
       <table class="data" id="mcpTable">
         <thead>
@@ -76,6 +78,7 @@
             <th>Tools</th>
             <th>Author</th>
             <th>Status</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -94,10 +97,16 @@
     <section id="tab-settings" class="panel">
       <div class="block">
         <h2>Admin token</h2>
-        <p class="hint">Stored only in your browser (localStorage). Sent in the Authorization header for admin actions.</p>
+        <p class="hint">
+          Paste the raw value of <code>ADMIN_TOKEN</code> from your <code>.env</code>
+          (default: <code>change-me-before-deploy</code>). Do <strong>not</strong>
+          include the word "Bearer" — the dashboard adds it for you.
+          Stored only in your browser's localStorage.
+        </p>
         <div class="settings-row">
-          <input type="password" id="adminTokenInput" placeholder="Bearer token" />
+          <input type="password" id="adminTokenInput" placeholder="raw ADMIN_TOKEN value" autocomplete="off" />
           <button id="saveTokenBtn" class="primary">Save</button>
+          <button id="testTokenBtn" class="ghost">Test</button>
           <button id="clearTokenBtn" class="ghost">Clear</button>
         </div>
         <p id="tokenStatus" class="hint"></p>
@@ -105,11 +114,12 @@
     </section>
   </main>
 
-  <!-- Add-agent modal -->
-  <div class="modal" id="addAgentModal" hidden>
+  <!-- Agent modal (add + edit) -->
+  <div class="modal" id="agentModal" hidden>
     <div class="modal-inner">
-      <h2>Register a new agent</h2>
-      <form id="addAgentForm">
+      <h2 id="agentModalTitle">Register a new agent</h2>
+      <form id="agentForm">
+        <input type="hidden" name="id" />
         <label>Name *<input name="name" required /></label>
         <label>Description * (min 20 chars)<textarea name="description" required></textarea></label>
         <label>Provider *<input name="provider" required /></label>
@@ -129,15 +139,57 @@
             <option value="oauth">oauth</option>
           </select>
         </label>
+        <label class="edit-only" hidden>Status
+          <select name="status">
+            <option value="active">active</option>
+            <option value="degraded">degraded</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
         <div class="modal-actions">
-          <button type="button" id="cancelAddAgent" class="ghost">Cancel</button>
-          <button type="submit" class="primary">Create</button>
+          <button type="button" class="ghost" data-close-modal="agentModal">Cancel</button>
+          <button type="submit" class="primary" id="agentSubmitBtn">Create</button>
         </div>
-        <p id="addAgentError" class="error"></p>
+        <p id="agentFormError" class="error"></p>
       </form>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <!-- MCP server modal (add + edit) -->
+  <div class="modal" id="mcpModal" hidden>
+    <div class="modal-inner">
+      <h2 id="mcpModalTitle">Register a new MCP server</h2>
+      <form id="mcpForm">
+        <input type="hidden" name="id" />
+        <label>Name *<input name="name" required /></label>
+        <label>Description *<textarea name="description" required></textarea></label>
+        <label>Transport *
+          <select name="transport" required>
+            <option value="http">http</option>
+            <option value="stdio">stdio</option>
+            <option value="sse">sse</option>
+          </select>
+        </label>
+        <label>Category<input name="category" placeholder="data, devtools, search…" /></label>
+        <label>Author<input name="author" /></label>
+        <label>Config URL<input name="config_url" type="url" /></label>
+        <label>Package URL<input name="package_url" type="url" /></label>
+        <label>Tools (JSON array, e.g. [{"name":"query","description":"…"}])<textarea name="tools" placeholder="[]"></textarea></label>
+        <label class="edit-only" hidden>Status
+          <select name="status">
+            <option value="active">active</option>
+            <option value="inactive">inactive</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close-modal="mcpModal">Cancel</button>
+          <button type="submit" class="primary" id="mcpSubmitBtn">Create</button>
+        </div>
+        <p id="mcpFormError" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/dashboard/app.js"></script>
 </body>
 </html>
