@@ -1,0 +1,23 @@
+{
+  "name": "agennect-open",
+  "version": "0.1.0",
+  "description": "Self-hosted A2A agent registry with MCP server directory",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "node -e \"import('./src/db.js').then(m => m.migrate())\"",
+    "seed": "node scripts/seed.js",
+    "test": "node tests/integration.js"
+  },
+  "dependencies": {
+    "hono": "^4.4.0",
+    "better-sqlite3": "^9.6.0",
+    "sqlite-vec": "^0.1.6",
+    "@hono/node-server": "^1.12.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

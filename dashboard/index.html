@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>agennect-open — Registry</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <span class="brand-name">agennect-open</span>
+      <span class="brand-tag">A2A · MCP registry</span>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="agents">Agents</button>
+      <button class="tab" data-tab="mcp">MCP Servers</button>
+      <button class="tab" data-tab="health">Health</button>
+      <button class="tab" data-tab="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- OVERVIEW -->
+    <section id="tab-overview" class="panel active">
+      <div class="cards" id="cards"></div>
+      <div class="block">
+        <h2>Top agents (24h)</h2>
+        <table class="data" id="topAgentsTable">
+          <thead>
+            <tr><th>Name</th><th>ID</th><th>Invocations 24h</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- AGENTS -->
+    <section id="tab-agents" class="panel">
+      <div class="toolbar">
+        <input type="text" id="agentSearch" placeholder="Semantic search: e.g. data governance, pipeline monitoring" />
+        <button id="agentSearchBtn">Search</button>
+        <button id="agentClearBtn" class="ghost">Clear</button>
+        <button id="agentAddBtn" class="primary admin-only" hidden>+ Add agent</button>
+      </div>
+      <table class="data" id="agentsTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Provider</th>
+            <th>Protocols</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>Inv/24h</th>
+            <th>Latency</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- MCP -->
+    <section id="tab-mcp" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">MCP Server Directory</h2>
+      </div>
+      <table class="data" id="mcpTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Transport</th>
+            <th>Category</th>
+            <th>Tools</th>
+            <th>Author</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- HEALTH -->
+    <section id="tab-health" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">Per-agent health (24h)</h2>
+      </div>
+      <div id="healthList"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="panel">
+      <div class="block">
+        <h2>Admin token</h2>
+        <p class="hint">Stored only in your browser (localStorage). Sent in the Authorization header for admin actions.</p>
+        <div class="settings-row">
+          <input type="password" id="adminTokenInput" placeholder="Bearer token" />
+          <button id="saveTokenBtn" class="primary">Save</button>
+          <button id="clearTokenBtn" class="ghost">Clear</button>
+        </div>
+        <p id="tokenStatus" class="hint"></p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add-agent modal -->
+  <div class="modal" id="addAgentModal" hidden>
+    <div class="modal-inner">
+      <h2>Register a new agent</h2>
+      <form id="addAgentForm">
+        <label>Name *<input name="name" required /></label>
+        <label>Description * (min 20 chars)<textarea name="description" required></textarea></label>
+        <label>Provider *<input name="provider" required /></label>
+        <label>Endpoint URL<input name="endpoint_url" type="url" /></label>
+        <label>Protocols (comma-separated, default A2A)<input name="protocols" placeholder="A2A,MCP" /></label>
+        <label>Capabilities (comma-separated)<input name="capabilities" placeholder="EDA, SQL, Visualization" /></label>
+        <label>Hosting
+          <select name="hosting">
+            <option value="referenced">referenced</option>
+            <option value="hosted">hosted</option>
+          </select>
+        </label>
+        <label>Auth type
+          <select name="auth_type">
+            <option value="none">none</option>
+            <option value="apikey">apikey</option>
+            <option value="oauth">oauth</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" id="cancelAddAgent" class="ghost">Cancel</button>
+          <button type="submit" class="primary">Create</button>
+        </div>
+        <p id="addAgentError" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
