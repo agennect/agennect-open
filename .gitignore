@@ -48,3 +48,6 @@ logs/
 .cache/
 .tmp/
 tmp/
+
+# Local agent / IDE state
+.claude/
