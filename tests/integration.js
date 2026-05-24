@@ -180,19 +180,62 @@ async function main() {
     }
   });
 
-  await block('BLOCK 5 — Invocations', async () => {
-    if (createdAgentId) {
-      const inv = await http('POST', `/agents/${createdAgentId}/tasks`, {
-        body: { message: { role: 'user', parts: [{ type: 'text', text: 'ping' }] } }
-      });
-      check('POST /agents/:id/tasks (no endpoint) handled', [502, 504, 400].includes(inv.status), `status=${inv.status}`);
-
-      const m = await http('GET', `/metrics/agents/${createdAgentId}`);
-      check('GET /metrics/agents/:id → 200', m.status === 200);
-      check('GET /metrics/agents/:id has invocations object', !!m.body?.invocations);
-    } else {
+  await block('BLOCK 5 — Invocations (Mode B SDK + Mode A proxy gate)', async () => {
+    if (!createdAgentId) {
       console.log('  ⚠ no agent id from BLOCK 2 — skipping');
+      return;
     }
+
+    // Mode B — report a successful invocation
+    const r1 = await http('POST', `/agents/${createdAgentId}/report`, {
+      body: { latency_ms: 340, status: 'success', request_size: 512, response_size: 1024 }
+    });
+    check('POST /:id/report (success) → 200', r1.status === 200, `status=${r1.status}`);
+    check('Report returns ok + invocation_id', r1.body?.ok === true && !!r1.body?.invocation_id);
+
+    // Mode B — report a timeout
+    const r2 = await http('POST', `/agents/${createdAgentId}/report`, {
+      body: { latency_ms: 5001, status: 'timeout', error_msg: 'Agent timed out after 5000ms' }
+    });
+    check('POST /:id/report (timeout) → 200', r2.status === 200);
+
+    // Mode B — invalid (missing latency_ms)
+    const r3 = await http('POST', `/agents/${createdAgentId}/report`, {
+      body: { status: 'success' }
+    });
+    check('POST /:id/report (invalid) → 400', r3.status === 400);
+
+    // Mode A — proxy disabled by default → 422 with hint
+    const proxy = await http('POST', `/agents/${createdAgentId}/tasks`, {
+      body: { message: { role: 'user', parts: [{ type: 'text', text: 'ping' }] } }
+    });
+    check('POST /:id/tasks (proxy off) → 422', proxy.status === 422, `status=${proxy.status}`);
+    check('422 response includes a hint', typeof proxy.body?.hint === 'string');
+
+    // Metrics reflect the reports
+    const m = await http('GET', `/metrics/agents/${createdAgentId}`);
+    check('GET /metrics/agents/:id → 200', m.status === 200);
+    check('agent metrics has invocations.last_24h >= 2', (m.body?.invocations?.last_24h || 0) >= 2);
+    check('p50_latency_ms is a number', typeof m.body?.invocations?.p50_latency_ms === 'number');
+
+    // /invocations list
+    const list = await http('GET', `/agents/${createdAgentId}/invocations`);
+    check('GET /:id/invocations → 200', list.status === 200);
+    check('invocations is array', Array.isArray(list.body?.invocations));
+    check('first invocation has mode field', list.body?.invocations?.[0]?.mode === 'sdk');
+
+    // Global timeseries
+    const ts = await http('GET', '/metrics/timeseries?hours=24');
+    check('GET /metrics/timeseries → 200', ts.status === 200);
+    check('timeseries.series is array', Array.isArray(ts.body?.series));
+
+    // Global metrics reflects the test invocations and includes mode_breakdown
+    const gm = await http('GET', '/metrics');
+    check('Global metrics last_24h includes test invocations', (gm.body?.invocations?.last_24h || 0) >= 2);
+    check('Global metrics has mode_breakdown', typeof gm.body?.invocations?.mode_breakdown === 'object');
+    check('Global success_rate_24h_pct is number or null',
+      gm.body?.invocations?.success_rate_24h_pct === null ||
+      typeof gm.body?.invocations?.success_rate_24h_pct === 'number');
   });
 
   await block('BLOCK 6 — Health', async () => {
