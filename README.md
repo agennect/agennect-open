@@ -104,13 +104,101 @@ All settings come from environment variables (see `.env.example`).
 
 The caller may pass `X-Agent-Auth: <value>` to forward an API key or OAuth
 token to the upstream agent endpoint. The registry never persists this value.
+See **Invocation Modes** below for the two ways callers can drive an agent.
+
+---
+
+## Invocation Modes
+
+agennect-open supports two modes for tracking agent invocations.
+
+### Mode B — SDK (default, recommended)
+
+Your orchestrator (or calling agent) invokes the target agent **directly**
+and reports metrics to the registry afterwards. Zero added latency,
+no single point of failure, no registry restart pain.
+
+#### JavaScript / Node.js
+
+```js
+import { AgennectReporter } from './src/sdk/reporter.js';
+
+const reporter = new AgennectReporter('http://localhost:3000', {
+  callerId: 'my-orchestrator'
+});
+
+const { invoke } = reporter.wrap('dataoracle-x7k2');
+
+try {
+  const { result, latency_ms } = await invoke(
+    'https://myagent.com/tasks',
+    { message: { parts: [{ type: 'text', text: 'Analyze Q1 data' }] } }
+  );
+  console.log(`Done in ${latency_ms}ms`, result);
+} catch (e) {
+  console.error('Invocation failed:', e.message);
+}
+```
+
+Or report metrics for an invocation you handled yourself:
+
+```js
+await reporter.report('dataoracle-x7k2', {
+  latency_ms: 340,
+  status: 'success',
+  request_size: 512,
+  response_size: 1024
+});
+```
+
+#### Python
+
+```python
+from reporter import AgennectReporter
+
+reporter = AgennectReporter(
+    "http://localhost:3000", caller_id="my-orchestrator"
+)
+
+result = reporter.invoke(
+    agent_id="dataoracle-x7k2",
+    endpoint_url="https://myagent.com/tasks",
+    payload={"message": {"parts": [
+        {"type": "text", "text": "Analyze Q1 data"}
+    ]}}
+)
+```
+
+Both SDKs **fire-and-forget** the report — the caller never blocks on
+registry availability.
+
+### Mode A — Proxy (opt-in per agent)
+
+The registry forwards the A2A task to the agent's endpoint, measures
+everything, logs it, and returns the A2A response. Useful when the caller
+can't or won't import the SDK, or when you want central auth fan-out.
+
+Enable per-agent via the admin API:
 
 ```bash
-curl -X POST http://localhost:3000/agents/dataoracle-ab/tasks \
+curl -X PUT http://localhost:3000/agents/{id} \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Auth: $UPSTREAM_KEY" \
-  -d '{"message":{"role":"user","parts":[{"type":"text","text":"summarize Q4 sales"}]}}'
+  -d '{"proxy_enabled": true}'
 ```
+
+Then invoke through the registry:
+
+```bash
+curl -X POST http://localhost:3000/agents/{id}/tasks \
+  -H "Content-Type: application/json" \
+  -H "X-Agent-Auth: your-agent-api-key" \
+  -d '{"message":{"role":"user","parts":[{"type":"text","text":"Analyze Q1"}]}}'
+```
+
+The response embeds an `_agennect` block with the invocation id and
+latency. If `proxy_enabled` is false, `POST /agents/:id/tasks` returns
+`422` with a hint pointing to `/agents/:id/report`.
 
 ---
 

@@ -27,11 +27,18 @@
     <!-- OVERVIEW -->
     <section id="tab-overview" class="panel active">
       <div class="cards" id="cards"></div>
+      <p id="modeBreakdown" class="hint" style="margin: -10px 0 22px 2px;"></p>
       <div class="block">
         <h2>Top agents (24h)</h2>
         <table class="data" id="topAgentsTable">
           <thead>
-            <tr><th>Name</th><th>ID</th><th>Invocations 24h</th></tr>
+            <tr>
+              <th>Name</th>
+              <th>ID</th>
+              <th>Invocations 24h</th>
+              <th>Avg latency</th>
+              <th>Success rate</th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>

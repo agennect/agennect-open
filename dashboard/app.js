@@ -103,19 +103,18 @@ async function loadOverview() {
   cards.innerHTML = '';
   try {
     const m = await api('/metrics');
+    const inv = m.invocations || {};
+    const fmtMs = (v) => v != null ? v + ' ms' : '—';
+
     const data = [
-      ['Total Agents', m.registry.agents_total],
-      ['Active', m.registry.agents_active],
-      ['Invocations 24h', m.invocations.last_24h],
-      ['Success Rate', m.invocations.success_rate_24h != null
-        ? (m.invocations.success_rate_24h * 100).toFixed(1) + '%'
-        : '—'],
-      ['Avg Latency', m.invocations.avg_latency_ms_24h != null
-        ? m.invocations.avg_latency_ms_24h + ' ms'
-        : '—'],
-      ['MCP Servers', m.registry.mcp_servers],
-      ['Agents Down', m.health.agents_down],
-      ['Agents Up', m.health.agents_up]
+      ['Total Agents',     m.registry.agents_total],
+      ['Active',           m.registry.agents_active],
+      ['Invocations 24h',  inv.last_24h],
+      ['Success Rate',     inv.success_rate_24h_pct != null ? inv.success_rate_24h_pct + '%' : '—'],
+      ['Avg Latency',      fmtMs(inv.avg_latency_ms_24h)],
+      ['P95 Latency',      fmtMs(inv.p95_latency_ms_24h)],
+      ['MCP Servers',      m.registry.mcp_servers],
+      ['Agents Down',      m.health.agents_down]
     ];
     cards.innerHTML = data.map(([l, v]) => `
       <div class="card">
@@ -124,6 +123,17 @@ async function loadOverview() {
       </div>
     `).join('');
 
+    // Mode breakdown (SDK vs proxy invocations in last 24h)
+    const breakdown = inv.mode_breakdown || {};
+    const breakdownEl = document.getElementById('modeBreakdown');
+    if (breakdownEl) {
+      const sdk = breakdown.sdk || 0;
+      const proxy = breakdown.proxy || 0;
+      breakdownEl.innerHTML = (sdk + proxy) > 0
+        ? `Invocation mode (24h): <strong>SDK</strong> ${sdk} · <strong>Proxy</strong> ${proxy}`
+        : `<span class="muted">No invocations logged in the last 24h.</span>`;
+    }
+
     const tbody = document.querySelector('#topAgentsTable tbody');
     tbody.innerHTML = m.top_agents.length
       ? m.top_agents.map(a => `
@@ -131,9 +141,11 @@ async function loadOverview() {
             <td>${escapeHtml(a.name || '(deleted)')}</td>
             <td class="muted">${escapeHtml(a.id || '')}</td>
             <td>${a.invocations_24h}</td>
+            <td>${fmtMs(a.avg_latency_ms)}</td>
+            <td>${a.success_rate_pct != null ? a.success_rate_pct + '%' : '—'}</td>
           </tr>
         `).join('')
-      : `<tr><td colspan="3" class="muted">No invocations in the last 24h.</td></tr>`;
+      : `<tr><td colspan="5" class="muted">No invocations in the last 24h.</td></tr>`;
   } catch (e) {
     console.error('loadOverview failed:', e.message);
     cards.innerHTML = `<div class="card"><div class="label">Error</div><div class="value">${escapeHtml(e.message)}</div></div>`;

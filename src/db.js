@@ -21,12 +21,31 @@ try {
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function runMigrationFile(path, { tolerateDuplicateColumn = false } = {}) {
+  const sql = readFileSync(join(__dirname, path), 'utf8');
+  if (!tolerateDuplicateColumn) {
+    db.exec(sql);
+    return;
+  }
+  // SQLite has no `ADD COLUMN IF NOT EXISTS`. Run each statement individually
+  // and swallow only the specific "duplicate column" error.
+  const statements = sql
+    .split(';')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  for (const stmt of statements) {
+    try {
+      db.exec(stmt + ';');
+    } catch (e) {
+      if (/duplicate column/i.test(e.message)) continue;
+      console.error(`migration statement failed: ${stmt}`);
+      throw e;
+    }
+  }
+}
+
 export function migrate() {
-  const sql = readFileSync(
-    join(__dirname, '../migrations/001_init.sql'),
-    'utf8'
-  );
-  db.exec(sql);
+  runMigrationFile('../migrations/001_init.sql');
 
   const dims = parseInt(process.env.EMBEDDING_DIMS || '1024');
   db.exec(`
@@ -34,7 +53,9 @@ export function migrate() {
     USING vec0(embedding float[${dims}])
   `);
 
-  console.log('✓ Database migrated');
+  runMigrationFile('../migrations/002_proxy.sql', { tolerateDuplicateColumn: true });
+
+  console.log('✓ Database migrated (001 + 002)');
 }
 
 migrate();
