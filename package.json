@@ -12,10 +12,11 @@
     "test": "node tests/integration.js"
   },
   "dependencies": {
-    "hono": "^4.4.0",
+    "@hono/node-server": "^1.12.0",
     "better-sqlite3": "^9.6.0",
+    "hono": "^4.4.0",
     "sqlite-vec": "^0.1.6",
-    "@hono/node-server": "^1.12.0"
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=20.0.0"

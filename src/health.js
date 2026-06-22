@@ -5,7 +5,8 @@ const INTERVAL = parseInt(process.env.HEALTH_CHECK_INTERVAL || '300000');
 export function startHealthChecks() {
   console.log(`✓ Health checks every ${INTERVAL / 1000}s`);
   checkAll().catch(e => console.error('Initial health check error:', e.message));
-  setInterval(() => {
+  // Return handle so graceful shutdown can clearInterval().
+  return setInterval(() => {
     checkAll().catch(e => console.error('Health check tick error:', e.message));
   }, INTERVAL);
 }
