@@ -2,15 +2,11 @@ import { Hono } from 'hono';
 import { db } from '../db.js';
 import { embed } from '../embeddings.js';
 import { generateAgentCard } from '../a2a.js';
+import { requireScope } from '../auth.js';
+import { audit } from '../audit.js';
+import { AgentCreateSchema, AgentUpdateSchema, parseOrError } from '../validation.js';
 
 export const agentsRouter = new Hono();
-
-function requireAdmin(c) {
-  if (!c.get('isAdmin')) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-  return null;
-}
 
 function slugify(name) {
   return String(name)
@@ -235,19 +231,20 @@ agentsRouter.get('/:id', (c) => {
 
 // POST /agents — admin
 agentsRouter.post('/', async (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
-  let body;
+  let raw;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch (e) {
     console.error('POST /agents body parse failed:', e.message);
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const errors = validateAgentBody(body, { required: true });
-  if (errors.length) return c.json({ error: errors.join('; ') }, 400);
+  const parsed = parseOrError(c, AgentCreateSchema, raw);
+  if (parsed.error) return parsed.error;
+  const body = parsed.data;
 
   const id = `${slugify(body.name)}-${randomHex(2)}`;
   const protocols = JSON.stringify(body.protocols || ['A2A']);
@@ -291,6 +288,12 @@ agentsRouter.post('/', async (c) => {
     db.prepare(`UPDATE agents SET agent_card = ? WHERE id = ?`)
       .run(JSON.stringify(card), id);
 
+    audit(c, {
+      action: 'agent.create',
+      target_type: 'agent', target_id: id,
+      after: { name: agent.name, provider: agent.provider, status: agent.status }
+    });
+
     return c.json({
       id,
       status: 'created',
@@ -304,23 +307,24 @@ agentsRouter.post('/', async (c) => {
 
 // PUT /agents/:id — admin
 agentsRouter.put('/:id', async (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
   const id = c.req.param('id');
   const existing = db.prepare(`SELECT * FROM agents WHERE id = ?`).get(id);
   if (!existing) return c.json({ error: 'Agent not found' }, 404);
 
-  let body;
+  let raw;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch (e) {
     console.error('PUT /agents body parse failed:', e.message);
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const errors = validateAgentBody(body, { required: false });
-  if (errors.length) return c.json({ error: errors.join('; ') }, 400);
+  const parsed = parseOrError(c, AgentUpdateSchema, raw);
+  if (parsed.error) return parsed.error;
+  const body = parsed.data;
 
   try {
     const updates = [];
@@ -366,7 +370,16 @@ agentsRouter.put('/:id', async (c) => {
     }
 
     const row = db.prepare(`SELECT * FROM agents WHERE id = ?`).get(id);
-    return c.json(hydrateAgent(row));
+    const after = hydrateAgent(row);
+
+    audit(c, {
+      action: 'agent.update',
+      target_type: 'agent', target_id: id,
+      before: { name: existing.name, status: existing.status },
+      after:  { name: after.name, status: after.status }
+    });
+
+    return c.json(after);
   } catch (e) {
     console.error('PUT /agents/:id failed:', e.message);
     return c.json({ error: e.message }, 500);
@@ -375,18 +388,26 @@ agentsRouter.put('/:id', async (c) => {
 
 // DELETE /agents/:id — admin (soft delete)
 agentsRouter.delete('/:id', (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
   const id = c.req.param('id');
   try {
-    const existing = db.prepare(`SELECT id FROM agents WHERE id = ?`).get(id);
+    const existing = db.prepare(`SELECT id, name, status FROM agents WHERE id = ?`).get(id);
     if (!existing) return c.json({ error: 'Agent not found' }, 404);
 
     db.prepare(
       `UPDATE agents SET status = 'inactive', updated_at = datetime('now')
        WHERE id = ?`
     ).run(id);
+
+    audit(c, {
+      action: 'agent.delete',
+      target_type: 'agent', target_id: id,
+      before: { name: existing.name, status: existing.status },
+      after:  { status: 'inactive' }
+    });
+
     return c.json({ ok: true });
   } catch (e) {
     console.error('DELETE /agents/:id failed:', e.message);
@@ -394,7 +415,12 @@ agentsRouter.delete('/:id', (c) => {
   }
 });
 
-function validateAgentBody(body, { required }) {
+// Kept for back-compat (callers from earlier sprints). Zod now does the
+// real work; this stub returns no errors so old call sites stay valid.
+function validateAgentBody(_body, _opts) { return []; }
+
+// Legacy hand-rolled validator (no longer used, kept inert):
+function _legacyValidateAgentBody(body, { required }) {
   const errors = [];
   if (!body || typeof body !== 'object') {
     errors.push('Body must be an object');

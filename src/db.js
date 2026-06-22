@@ -21,15 +21,28 @@ try {
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function stripSqlLineComments(sql) {
+  // Drop everything after `--` on each line. Does NOT understand string
+  // literals — fine here because our migrations have no `--` inside strings.
+  return sql
+    .split('\n')
+    .map(line => {
+      const idx = line.indexOf('--');
+      return idx >= 0 ? line.slice(0, idx) : line;
+    })
+    .join('\n');
+}
+
 function runMigrationFile(path, { tolerateDuplicateColumn = false } = {}) {
-  const sql = readFileSync(join(__dirname, path), 'utf8');
+  const rawSql = readFileSync(join(__dirname, path), 'utf8');
   if (!tolerateDuplicateColumn) {
-    db.exec(sql);
+    db.exec(rawSql);
     return;
   }
   // SQLite has no `ADD COLUMN IF NOT EXISTS`. Run each statement individually
-  // and swallow only the specific "duplicate column" error.
-  const statements = sql
+  // and swallow only the specific "duplicate column" error. Strip line
+  // comments first so we don't split on a `;` that lives inside one.
+  const statements = stripSqlLineComments(rawSql)
     .split(';')
     .map(s => s.trim())
     .filter(s => s.length > 0);
@@ -54,8 +67,9 @@ export function migrate() {
   `);
 
   runMigrationFile('../migrations/002_proxy.sql', { tolerateDuplicateColumn: true });
+  runMigrationFile('../migrations/003_auth_audit.sql');
 
-  console.log('✓ Database migrated (001 + 002)');
+  console.log('✓ Database migrated (001 + 002 + 003)');
 }
 
 migrate();

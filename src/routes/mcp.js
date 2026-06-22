@@ -1,14 +1,10 @@
 import { Hono } from 'hono';
 import { db } from '../db.js';
+import { requireScope } from '../auth.js';
+import { audit } from '../audit.js';
+import { McpCreateSchema, McpUpdateSchema, parseOrError } from '../validation.js';
 
 export const mcpRouter = new Hono();
-
-function requireAdmin(c) {
-  if (!c.get('isAdmin')) {
-    return c.json({ error: 'Unauthorized' }, 401);
-  }
-  return null;
-}
 
 function slugify(name) {
   return String(name)
@@ -95,25 +91,20 @@ mcpRouter.get('/:id', (c) => {
 
 // POST /mcp — admin
 mcpRouter.post('/', async (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
-  let body;
+  let raw;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch (e) {
     console.error('POST /mcp body parse failed:', e.message);
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const errors = [];
-  if (!body.name) errors.push('name is required');
-  if (!body.description) errors.push('description is required');
-  if (!body.transport) errors.push('transport is required');
-  if (body.transport && !['stdio', 'http', 'sse'].includes(body.transport)) {
-    errors.push('transport must be one of: stdio, http, sse');
-  }
-  if (errors.length) return c.json({ error: errors.join('; ') }, 400);
+  const parsed = parseOrError(c, McpCreateSchema, raw);
+  if (parsed.error) return parsed.error;
+  const body = parsed.data;
 
   const id = `${slugify(body.name)}-${randomHex(2)}`;
   const tools = JSON.stringify(Array.isArray(body.tools) ? body.tools : []);
@@ -135,6 +126,13 @@ mcpRouter.post('/', async (c) => {
       body.category || null,
       body.author || null
     );
+
+    audit(c, {
+      action: 'mcp.create',
+      target_type: 'mcp', target_id: id,
+      after: { name: body.name, transport: body.transport, category: body.category }
+    });
+
     return c.json({ id, name: body.name }, 201);
   } catch (e) {
     console.error('POST /mcp failed:', e.message);
@@ -144,29 +142,24 @@ mcpRouter.post('/', async (c) => {
 
 // PUT /mcp/:id — admin (update; only provided fields)
 mcpRouter.put('/:id', async (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
   const id = c.req.param('id');
-  const existing = db.prepare(`SELECT id FROM mcp_servers WHERE id = ?`).get(id);
+  const existing = db.prepare(`SELECT * FROM mcp_servers WHERE id = ?`).get(id);
   if (!existing) return c.json({ error: 'MCP server not found' }, 404);
 
-  let body;
+  let raw;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch (e) {
     console.error('PUT /mcp body parse failed:', e.message);
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const errors = [];
-  if (body.transport && !['stdio', 'http', 'sse'].includes(body.transport)) {
-    errors.push('transport must be one of: stdio, http, sse');
-  }
-  if (body.status && !['active', 'inactive'].includes(body.status)) {
-    errors.push('status must be active or inactive');
-  }
-  if (errors.length) return c.json({ error: errors.join('; ') }, 400);
+  const parsed = parseOrError(c, McpUpdateSchema, raw);
+  if (parsed.error) return parsed.error;
+  const body = parsed.data;
 
   try {
     const updates = [];
@@ -189,7 +182,16 @@ mcpRouter.put('/:id', async (c) => {
     }
 
     const row = db.prepare(`SELECT * FROM mcp_servers WHERE id = ?`).get(id);
-    return c.json(hydrateServer(row));
+    const after = hydrateServer(row);
+
+    audit(c, {
+      action: 'mcp.update',
+      target_type: 'mcp', target_id: id,
+      before: { name: existing.name, status: existing.status },
+      after:  { name: after.name, status: after.status }
+    });
+
+    return c.json(after);
   } catch (e) {
     console.error('PUT /mcp/:id failed:', e.message);
     return c.json({ error: e.message }, 500);
@@ -198,17 +200,25 @@ mcpRouter.put('/:id', async (c) => {
 
 // DELETE /mcp/:id — admin (soft delete)
 mcpRouter.delete('/:id', (c) => {
-  const denied = requireAdmin(c);
+  const denied = requireScope(c, 'write');
   if (denied) return denied;
 
   try {
     const id = c.req.param('id');
-    const existing = db.prepare(`SELECT id FROM mcp_servers WHERE id = ?`).get(id);
+    const existing = db.prepare(`SELECT id, name, status FROM mcp_servers WHERE id = ?`).get(id);
     if (!existing) return c.json({ error: 'MCP server not found' }, 404);
 
     db.prepare(
       `UPDATE mcp_servers SET status = 'inactive' WHERE id = ?`
     ).run(id);
+
+    audit(c, {
+      action: 'mcp.delete',
+      target_type: 'mcp', target_id: id,
+      before: { name: existing.name, status: existing.status },
+      after:  { status: 'inactive' }
+    });
+
     return c.json({ ok: true });
   } catch (e) {
     console.error('DELETE /mcp/:id failed:', e.message);

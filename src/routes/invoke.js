@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { db } from '../db.js';
+import { ReportSchema, parseOrError } from '../validation.js';
 
 export const invokeRouter = new Hono();
 
@@ -29,14 +30,16 @@ invokeRouter.post('/:id/report', async (c) => {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  let body;
+  let raw;
   try {
-    body = await c.req.json();
+    raw = await c.req.json();
   } catch (e) {
     console.error('POST /:id/report body parse failed:', e.message);
     return c.json({ error: 'Invalid JSON body' }, 400);
   }
 
+  const parsed = parseOrError(c, ReportSchema, raw);
+  if (parsed.error) return parsed.error;
   const {
     latency_ms,
     status,
@@ -44,14 +47,7 @@ invokeRouter.post('/:id/report', async (c) => {
     response_size,
     error_msg,
     caller_agent_id
-  } = body || {};
-
-  if (typeof latency_ms !== 'number' || latency_ms < 0) {
-    return c.json({ error: 'latency_ms is required and must be a non-negative number' }, 400);
-  }
-  if (!['success', 'error', 'timeout'].includes(status)) {
-    return c.json({ error: 'status must be success, error, or timeout' }, 400);
-  }
+  } = parsed.data;
 
   const caller =
     c.req.header('X-Caller-ID') ||

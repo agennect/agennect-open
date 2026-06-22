@@ -50,6 +50,56 @@ npm run seed
 
 ---
 
+## Authentication & authorization
+
+Every write endpoint requires a Bearer token. Tokens live in the `tokens`
+table (hashed SHA-256, plaintext shown exactly once on creation) and have
+one of three scopes:
+
+| Scope    | Allowed                                                                 |
+|----------|-------------------------------------------------------------------------|
+| `read`   | All public GET endpoints (most don't need auth at all)                  |
+| `write`  | `read` + POST/PUT/DELETE on `/agents` and `/mcp`                        |
+| `admin`  | `write` + everything under `/admin` (token management, audit log)        |
+
+### Bootstrap
+
+On first boot, `process.env.ADMIN_TOKEN` is automatically registered as an
+`admin`-scope token (name `env-bootstrap`). That preserves the dashboard
+workflow: paste the env value, get admin access. Rotating the env var on a
+restart updates the bootstrap row's hash to match.
+
+### Managing tokens
+
+```bash
+# Mint a write-scope token (must come from an admin)
+curl -X POST http://localhost:3000/admin/tokens \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "ci-bot", "scope": "write"}'
+# → { "id": "...", "name": "ci-bot", "scope": "write", "token": "agk_…", "warning": "…" }
+
+# List token metadata (never the value)
+curl http://localhost:3000/admin/tokens -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Soft-revoke a token
+curl -X DELETE http://localhost:3000/admin/tokens/{id} \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+### Audit log
+
+Every successful mutation under `/agents`, `/mcp`, and `/admin/tokens`
+writes an append-only row to `audit_log` with actor, action, before/after,
+and IP. Read it back:
+
+```bash
+curl "http://localhost:3000/admin/audit?limit=50&action=agent.create" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+---
+
 ## Configuration
 
 All settings come from environment variables (see `.env.example`).
@@ -67,7 +117,8 @@ All settings come from environment variables (see `.env.example`).
 | `ANTHROPIC_API_KEY`     | —                               | Required when `LLM_PROVIDER=anthropic`. Used for the Voyage embeddings endpoint.                  |
 | `OPENAI_API_KEY`        | —                               | Required when `LLM_PROVIDER=openai`.                                                              |
 | `OLLAMA_URL`            | `http://localhost:11434`        | Required when `LLM_PROVIDER=ollama`.                                                              |
-| `ADMIN_TOKEN`           | `change-me-before-deploy`       | Bearer token required for POST/PUT/DELETE. Change it.                                             |
+| `ADMIN_TOKEN`           | `change-me-before-deploy`       | Auto-registered as the bootstrap `admin`-scope token (name `env-bootstrap`). Change it.            |
+| `CORS_ORIGINS`          | `*`                             | Comma-separated allowlist of origins, or `*` for any. Replace `*` before exposing to the internet. |
 | `HEALTH_CHECK_INTERVAL` | `300000`                        | Health check loop interval in ms.                                                                 |
 
 ---
@@ -90,7 +141,7 @@ All settings come from environment variables (see `.env.example`).
 | GET    | `/mcp`                                   | List MCP servers. Query: `category`, `transport`. |
 | GET    | `/mcp/:id`                               | MCP server detail with tools.                |
 
-### Admin (require `Authorization: Bearer $ADMIN_TOKEN`)
+### Write-scope (require a `write`- or `admin`-scope token)
 
 | Method | Path                  | Description                                  |
 |--------|-----------------------|----------------------------------------------|
@@ -98,7 +149,17 @@ All settings come from environment variables (see `.env.example`).
 | PUT    | `/agents/:id`         | Update agent. Re-embeds if name/description/capabilities change. |
 | DELETE | `/agents/:id`         | Soft-delete (`status=inactive`).             |
 | POST   | `/mcp`                | Register an MCP server.                      |
+| PUT    | `/mcp/:id`            | Update an MCP server.                        |
 | DELETE | `/mcp/:id`            | Soft-delete an MCP server.                   |
+
+### Admin-scope (require an `admin`-scope token)
+
+| Method | Path                              | Description                                |
+|--------|-----------------------------------|--------------------------------------------|
+| POST   | `/admin/tokens`                   | Mint a new token (returns plaintext once). |
+| GET    | `/admin/tokens`                   | List tokens (metadata only — no value).    |
+| DELETE | `/admin/tokens/:id`               | Soft-revoke a token.                        |
+| GET    | `/admin/audit`                    | Read audit log (filters: action, target_type, target_id, limit). |
 
 ### A2A invocation
 

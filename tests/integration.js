@@ -248,6 +248,85 @@ async function main() {
     check('Metrics agents_active is a number', typeof m.body?.registry?.agents_active === 'number');
   });
 
+  await block('BLOCK 7.5 — Multi-token auth + audit log', async () => {
+    // 1. Bootstrap admin token can mint a write-scoped token
+    const wName = 'integration-write-' + Date.now();
+    const wCreated = await http('POST', '/admin/tokens', {
+      admin: true,
+      body: { name: wName, scope: 'write' }
+    });
+    check('POST /admin/tokens (admin) → 201', wCreated.status === 201, `status=${wCreated.status}`);
+    check('Response includes plaintext token', typeof wCreated.body?.token === 'string');
+    const writeToken = wCreated.body?.token;
+    const writeId    = wCreated.body?.id;
+
+    // 2. write-scope token CAN create agents, CANNOT create tokens
+    if (writeToken) {
+      const okAgent = await fetch(`${BASE}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${writeToken}` },
+        body: JSON.stringify({
+          name: 'WriteScopeAgent ' + Date.now(),
+          description: 'Created via write-scope token in the integration suite.',
+          provider: 'integration'
+        })
+      });
+      check('write-scope can POST /agents → 201', okAgent.status === 201, `status=${okAgent.status}`);
+
+      const badAdmin = await fetch(`${BASE}/admin/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${writeToken}` },
+        body: JSON.stringify({ name: 'should-fail', scope: 'read' })
+      });
+      check('write-scope CANNOT POST /admin/tokens → 403', badAdmin.status === 403, `status=${badAdmin.status}`);
+    }
+
+    // 3. read-scope token CANNOT mutate
+    const rCreated = await http('POST', '/admin/tokens', {
+      admin: true,
+      body: { name: 'integration-read-' + Date.now(), scope: 'read' }
+    });
+    check('POST /admin/tokens read → 201', rCreated.status === 201);
+    const readToken = rCreated.body?.token;
+    if (readToken) {
+      const denied = await fetch(`${BASE}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${readToken}` },
+        body: JSON.stringify({
+          name: 'ReadScopeFail',
+          description: 'This request should be rejected with a 403 forbidden.',
+          provider: 'integration'
+        })
+      });
+      check('read-scope CANNOT POST /agents → 403', denied.status === 403, `status=${denied.status}`);
+    }
+
+    // 4. Audit log surfaces the mutations we just made
+    const auditRes = await http('GET', '/admin/audit?limit=20', { admin: true });
+    check('GET /admin/audit (admin) → 200', auditRes.status === 200);
+    check('Audit entries is array', Array.isArray(auditRes.body?.entries));
+    check('At least one audit entry exists', (auditRes.body?.entries || []).length > 0);
+    const hasTokenCreate = (auditRes.body?.entries || []).some(e => e.action === 'token.create');
+    check('Audit log contains token.create entry', hasTokenCreate);
+
+    // 5. Revoking the write token makes it stop working
+    if (writeId && writeToken) {
+      const rev = await http('DELETE', `/admin/tokens/${writeId}`, { admin: true });
+      check('DELETE /admin/tokens/:id (admin) → 200', rev.status === 200);
+
+      const afterRev = await fetch(`${BASE}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${writeToken}` },
+        body: JSON.stringify({
+          name: 'AfterRevoke',
+          description: 'This should be rejected because the token was just revoked.',
+          provider: 'integration'
+        })
+      });
+      check('revoked token → 401', afterRev.status === 401, `status=${afterRev.status}`);
+    }
+  });
+
   await block('BLOCK 7 — Dashboard', async () => {
     const d = await fetch(`${BASE}/dashboard`, {
       redirect: 'manual',
