@@ -183,7 +183,7 @@ async function loadAgents() {
             <a href="/agents/${encodeURIComponent(a.id)}/.well-known/agent.json" target="_blank">Card</a>
             ${isAdmin()
               ? `<button class="ghost" data-edit-agent="${escapeHtml(a.id)}">Edit</button>
-                 <button class="ghost" data-deactivate="${escapeHtml(a.id)}">Deactivate</button>`
+                 <button class="ghost" data-toggle-agent="${escapeHtml(a.id)}" data-target-status="${a.status === 'active' ? 'inactive' : 'active'}">${a.status === 'active' ? 'Deactivate' : 'Activate'}</button>`
               : ''}
           </td>
         </tr>`;
@@ -203,17 +203,22 @@ async function loadAgents() {
       });
     });
 
-    tbody.querySelectorAll('[data-deactivate]').forEach(btn => {
+    tbody.querySelectorAll('[data-toggle-agent]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const id = btn.dataset.deactivate;
-        if (!confirm(`Deactivate agent ${id}?`)) return;
+        const id = btn.dataset.toggleAgent;
+        const target = btn.dataset.targetStatus;
+        const verb = target === 'active' ? 'Activate' : 'Deactivate';
+        if (!confirm(`${verb} agent ${id}?`)) return;
         try {
-          await api(`/agents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          await api(`/agents/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ status: target })
+          });
           loadAgents();
           loadOverview();
         } catch (e) {
-          console.error('Deactivate failed:', e.message);
-          alert('Deactivate failed: ' + e.message);
+          console.error(`${verb} failed:`, e.message);
+          alert(`${verb} failed: ` + e.message);
         }
       });
     });
@@ -298,9 +303,7 @@ async function loadMcp() {
         <td class="actions">
           ${isAdmin()
             ? `<button class="ghost" data-edit-mcp="${escapeHtml(s.id)}">Edit</button>
-               ${s.status === 'active'
-                 ? `<button class="ghost" data-deactivate-mcp="${escapeHtml(s.id)}">Deactivate</button>`
-                 : ''}`
+               <button class="ghost" data-toggle-mcp="${escapeHtml(s.id)}" data-target-status="${s.status === 'active' ? 'inactive' : 'active'}">${s.status === 'active' ? 'Deactivate' : 'Activate'}</button>`
             : '<span class="muted">—</span>'}
         </td>
       </tr>
@@ -319,17 +322,22 @@ async function loadMcp() {
       });
     });
 
-    tbody.querySelectorAll('[data-deactivate-mcp]').forEach(btn => {
+    tbody.querySelectorAll('[data-toggle-mcp]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const id = btn.dataset.deactivateMcp;
-        if (!confirm(`Deactivate MCP server ${id}?`)) return;
+        const id = btn.dataset.toggleMcp;
+        const target = btn.dataset.targetStatus;
+        const verb = target === 'active' ? 'Activate' : 'Deactivate';
+        if (!confirm(`${verb} MCP server ${id}?`)) return;
         try {
-          await api(`/mcp/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          await api(`/mcp/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ status: target })
+          });
           loadMcp();
           loadOverview();
         } catch (e) {
-          console.error('Deactivate MCP failed:', e.message);
-          alert('Deactivate failed: ' + e.message);
+          console.error(`${verb} MCP failed:`, e.message);
+          alert(`${verb} failed: ` + e.message);
         }
       });
     });
