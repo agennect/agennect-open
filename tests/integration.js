@@ -485,6 +485,108 @@ async function main() {
     }
   });
 
+  await block('BLOCK 8.0 — Users admin endpoints', async () => {
+    // Bootstrap can list users — should at least include the system user
+    const list = await http('GET', '/admin/users', { admin: true });
+    check('GET /admin/users (admin) → 200', list.status === 200);
+    check('users is an array', Array.isArray(list.body?.users));
+    const system = (list.body?.users || []).find(u => u.provider === 'system');
+    check('system user is present', !!system);
+
+    // Non-admin (no auth) cannot list
+    const denied = await http('GET', '/admin/users');
+    check('GET /admin/users (no auth) → 401', denied.status === 401);
+
+    // Refuse to mutate the system user
+    if (system) {
+      const tryMutate = await http('PUT', `/admin/users/${system.id}`, {
+        admin: true,
+        body: { role: 'user' }
+      });
+      check('PUT system user → 400', tryMutate.status === 400);
+    }
+
+    // PUT on a missing user → 404
+    const missing = await http('PUT', '/admin/users/__missing__', {
+      admin: true,
+      body: { role: 'user' }
+    });
+    check('PUT missing user → 404', missing.status === 404);
+  });
+
+  await block('BLOCK 8.1 — Webhook pause + test', async () => {
+    // 1. Spin up a receiver
+    const received = [];
+    let resolveDelivery;
+    const deliveryPromise = new Promise((res) => { resolveDelivery = res; });
+    const receiver = await new Promise((res) => {
+      const s = createServer((req, resp) => {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          received.push({ body, signature: req.headers['x-agennect-signature'] });
+          resp.writeHead(200); resp.end('{"ok":true}');
+          resolveDelivery();
+        });
+      });
+      s.listen(0, '127.0.0.1', () => res(s));
+    });
+    const url = `http://127.0.0.1:${receiver.address().port}/sprint6-test`;
+
+    try {
+      // 2. Register a webhook for webhook.test (and only that)
+      const reg = await http('POST', '/admin/webhooks', {
+        admin: true,
+        body: { name: 'sprint6', url, events: ['webhook.test'] }
+      });
+      check('POST /admin/webhooks → 201', reg.status === 201);
+      const wid = reg.body?.id;
+
+      // 3. Pause the webhook, then trigger test — receiver must NOT get hit
+      if (wid) {
+        const paused = await http('PUT', `/admin/webhooks/${wid}`, {
+          admin: true,
+          body: { paused: true }
+        });
+        check('PUT pause → 200', paused.status === 200);
+
+        const blockedTest = await http('POST', `/admin/webhooks/${wid}/test`, { admin: true });
+        check('test fire while paused → 400', blockedTest.status === 400);
+
+        // Sanity: receiver got nothing
+        await new Promise(r => setTimeout(r, 400));
+        check('receiver got 0 deliveries while paused', received.length === 0);
+
+        // 4. Resume + fire — receiver should get the synthetic event
+        await http('PUT', `/admin/webhooks/${wid}`, {
+          admin: true, body: { paused: false }
+        });
+        const t = await http('POST', `/admin/webhooks/${wid}/test`, { admin: true });
+        check('test fire while active → 200', t.status === 200);
+
+        await Promise.race([
+          deliveryPromise,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('delivery timeout')), 3000))
+        ]).catch(() => {});
+
+        check('receiver got 1 delivery after test fire', received.length === 1, `got ${received.length}`);
+        if (received[0]) {
+          try {
+            const parsed = JSON.parse(received[0].body);
+            check('delivery event is webhook.test', parsed.event === 'webhook.test');
+          } catch (e) {
+            check('delivery body parses as JSON', false, e.message);
+          }
+        }
+
+        // Cleanup
+        await http('DELETE', `/admin/webhooks/${wid}`, { admin: true });
+      }
+    } finally {
+      receiver.close();
+    }
+  });
+
   await block('BLOCK 7 — Dashboard', async () => {
     const d = await fetch(`${BASE}/dashboard`, {
       redirect: 'manual',

@@ -55,8 +55,17 @@ bootstrapEnvToken();
 app.use('*', async (c, next) => {
   const header = c.req.header('Authorization') || '';
   const match = header.match(/^Bearer\s+(.+)$/i);
-  const token = match ? verifyToken(match[1]) : null;
-  const user  = token?.user_id ? findUserById(token.user_id) : null;
+  let token = match ? verifyToken(match[1]) : null;
+  let user  = token?.user_id ? findUserById(token.user_id) : null;
+
+  // If the underlying user has been disabled since this token was issued,
+  // treat the request as if it had no token at all. (We don't revoke the
+  // token row here to avoid surprising the admin who disabled them — the
+  // disable endpoint already revokes outstanding sessions.)
+  if (user && user.disabled_at) {
+    token = null;
+    user  = null;
+  }
 
   c.set('token', token);
   c.set('user',  user);

@@ -70,8 +70,9 @@ export function migrate() {
   runMigrationFile('../migrations/003_auth_audit.sql');
   runMigrationFile('../migrations/004_webhooks.sql');
   runMigrationFile('../migrations/005_users.sql', { tolerateDuplicateColumn: true });
+  runMigrationFile('../migrations/006_webhook_pause.sql', { tolerateDuplicateColumn: true });
 
-  console.log('✓ Database migrated (001 + 002 + 003 + 004 + 005)');
+  console.log('✓ Database migrated (001 + 002 + 003 + 004 + 005 + 006)');
 }
 
 migrate();
