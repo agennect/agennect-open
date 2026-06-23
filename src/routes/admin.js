@@ -7,6 +7,7 @@ import {
   requireScope,
   BOOTSTRAP_NAME
 } from '../auth.js';
+import { generateWebhookSecret, hashSecret } from '../webhooks.js';
 
 export const adminRouter = new Hono();
 
@@ -167,3 +168,113 @@ function safeParse(json) {
     return null;
   }
 }
+
+// ── /admin/webhooks ───────────────────────────────────────────────────────────
+
+const KNOWN_EVENTS = [
+  '*',
+  'agent.create', 'agent.update', 'agent.delete',
+  'mcp.create',   'mcp.update',   'mcp.delete',
+  'token.create', 'token.revoke',
+  'webhook.create', 'webhook.delete'
+];
+
+adminRouter.post('/webhooks', async (c) => {
+  const denied = requireScope(c, 'admin');
+  if (denied) return denied;
+
+  let body;
+  try { body = await c.req.json(); }
+  catch (e) {
+    console.error('POST /admin/webhooks body parse failed:', e.message);
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const name = (body?.name || '').trim();
+  const url  = (body?.url  || '').trim();
+  const events = Array.isArray(body?.events) && body.events.length
+    ? body.events
+    : ['*'];
+
+  if (!name) return c.json({ error: 'name is required' }, 400);
+  if (!url || !/^https?:\/\//.test(url)) {
+    return c.json({ error: 'url is required and must start with http(s)://' }, 400);
+  }
+  for (const e of events) {
+    if (!KNOWN_EVENTS.includes(e) && !KNOWN_EVENTS.some(k => k.endsWith('.*') && e === k)) {
+      return c.json({
+        error: `unknown event '${e}'. Known: ${KNOWN_EVENTS.join(', ')}`
+      }, 400);
+    }
+  }
+
+  const id = crypto.randomUUID();
+  const secret = generateWebhookSecret();
+
+  try {
+    db.prepare(`
+      INSERT INTO webhooks (id, name, url, events, secret_hash)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, name, url, JSON.stringify(events), hashSecret(secret));
+  } catch (e) {
+    console.error('POST /admin/webhooks insert failed:', e.message);
+    return c.json({ error: e.message }, 500);
+  }
+
+  audit(c, {
+    action: 'webhook.create',
+    target_type: 'webhook', target_id: id,
+    after: { name, url, events }
+  });
+
+  return c.json({
+    id, name, url, events,
+    secret,
+    signing_note: 'Use sha256(secret) as the HMAC key when verifying X-Agennect-Signature. Stored only as a hash; shown once.',
+    warning: 'This is the only time the secret will be shown.'
+  }, 201);
+});
+
+adminRouter.get('/webhooks', (c) => {
+  const denied = requireScope(c, 'admin');
+  if (denied) return denied;
+
+  try {
+    const rows = db.prepare(`
+      SELECT id, name, url, events, created_at,
+             last_delivery_at, last_status, last_error,
+             delivery_count, failure_count
+      FROM webhooks ORDER BY created_at DESC
+    `).all();
+    return c.json({
+      webhooks: rows.map(r => ({ ...r, events: safeParse(r.events) || [] }))
+    });
+  } catch (e) {
+    console.error('GET /admin/webhooks failed:', e.message);
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+adminRouter.delete('/webhooks/:id', (c) => {
+  const denied = requireScope(c, 'admin');
+  if (denied) return denied;
+
+  const id = c.req.param('id');
+  const existing = db.prepare(`SELECT name, url FROM webhooks WHERE id = ?`).get(id);
+  if (!existing) return c.json({ error: 'Webhook not found' }, 404);
+
+  try {
+    db.prepare(`DELETE FROM webhooks WHERE id = ?`).run(id);
+  } catch (e) {
+    console.error('DELETE /admin/webhooks/:id failed:', e.message);
+    return c.json({ error: e.message }, 500);
+  }
+
+  audit(c, {
+    action: 'webhook.delete',
+    target_type: 'webhook', target_id: id,
+    before: { name: existing.name, url: existing.url }
+  });
+
+  return c.json({ ok: true });
+});

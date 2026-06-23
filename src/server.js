@@ -7,6 +7,7 @@ import { mcpRouter } from './routes/mcp.js';
 import { invokeRouter } from './routes/invoke.js';
 import { metricsRouter } from './routes/metrics.js';
 import { adminRouter } from './routes/admin.js';
+import { metaRouter } from './routes/meta.js';
 import { startHealthChecks } from './health.js';
 import { bootstrapEnvToken, verifyToken, scopeSatisfies } from './auth.js';
 import { db } from './db.js';
@@ -61,13 +62,26 @@ app.use('*', async (c, next) => {
   await next();
 });
 
-// invokeRouter must come before agentsRouter so /agents/:id/tasks is resolved
-// to the invocation handler rather than swallowed by the generic /:id route.
-app.route('/agents', invokeRouter);
-app.route('/agents', agentsRouter);
-app.route('/mcp', mcpRouter);
+// Canonical /v1 prefix. invokeRouter must come before agentsRouter so
+// /agents/:id/tasks is resolved to the invocation handler rather than
+// swallowed by the generic /:id route.
+app.route('/v1/agents',  invokeRouter);
+app.route('/v1/agents',  agentsRouter);
+app.route('/v1/mcp',     mcpRouter);
+app.route('/v1/metrics', metricsRouter);
+app.route('/v1/admin',   adminRouter);
+
+// Top-level aliases — kept for backward compatibility with existing
+// clients (the dashboard, the seed script, and earlier README examples).
+// New consumers should use /v1.
+app.route('/agents',  invokeRouter);
+app.route('/agents',  agentsRouter);
+app.route('/mcp',     mcpRouter);
 app.route('/metrics', metricsRouter);
-app.route('/admin', adminRouter);
+app.route('/admin',   adminRouter);
+
+// Meta: /openapi.json + /openapi.yaml
+app.route('/', metaRouter);
 
 app.use('/dashboard/*', serveStatic({ root: './' }));
 app.get('/dashboard', (c) => c.redirect('/dashboard/index.html'));

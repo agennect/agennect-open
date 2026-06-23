@@ -69,6 +69,31 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function sparkline(values, { width = 280, height = 50 } = {}) {
+  const v = (values || []).map(Number).filter(n => Number.isFinite(n));
+  if (v.length === 0) return '<span class="muted">no data</span>';
+  if (v.length === 1) v.push(v[0]); // single point — duplicate so polyline has 2 vertices
+
+  const max = Math.max(...v);
+  const min = Math.min(...v);
+  const range = max - min || 1;
+  const stepX = width / (v.length - 1);
+
+  const points = v.map((val, i) => {
+    const x = i * stepX;
+    const y = height - ((val - min) / range) * (height - 4) - 2;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+
+  return `
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow: visible">
+      <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div class="muted" style="font-size: 10px; margin-top: 4px;">
+      ${v.length} buckets · min ${min} · max ${max}
+    </div>`;
+}
+
 // ─────────────────────────────────────── Tabs (event delegation)
 
 const initialTabs = document.querySelectorAll('.tab');
@@ -172,7 +197,7 @@ async function loadAgents() {
       } catch (e) { /* tolerate */ }
       return `
         <tr>
-          <td>${escapeHtml(a.name)}</td>
+          <td><a class="click-name" data-detail-agent="${escapeHtml(a.id)}">${escapeHtml(a.name)}</a></td>
           <td>${escapeHtml(a.provider)}</td>
           <td>${(a.protocols || []).map(p => escapeHtml(p)).join(', ')}</td>
           <td><span class="status-pill status-${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
@@ -202,6 +227,10 @@ async function loadAgents() {
         }
       });
     });
+
+    // Detail-link handler is wired once via document-level delegation
+    // (see init block at the bottom) so it works for both this table
+    // and the search results table without re-binding.
 
     tbody.querySelectorAll('[data-toggle-agent]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -242,7 +271,7 @@ async function searchAgents(q) {
       const scorePct = Math.round((r.score || 0) * 100);
       return `
         <tr>
-          <td>${escapeHtml(a.name)}</td>
+          <td><a class="click-name" data-detail-agent="${escapeHtml(a.id)}">${escapeHtml(a.name)}</a></td>
           <td>${escapeHtml(a.provider)}</td>
           <td>${(a.protocols || []).map(p => escapeHtml(p)).join(', ')}</td>
           <td><span class="status-pill status-${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
@@ -382,6 +411,123 @@ async function loadHealth() {
   }
 }
 
+// ─────────────────────────────────────── Per-agent detail modal
+
+const detailModal = document.getElementById('agentDetailModal');
+
+async function openAgentDetail(id) {
+  if (!id) return;
+  document.getElementById('detailName').textContent = '…';
+  document.getElementById('detailMeta').textContent = id;
+  document.getElementById('detailOverview').innerHTML = '<span class="muted">Loading…</span>';
+  document.getElementById('detailMetrics').innerHTML  = '';
+  document.getElementById('detailSparkline').innerHTML = '';
+  document.getElementById('detailHealth').innerHTML   = '';
+  document.getElementById('detailInvocations').innerHTML = '';
+  detailModal.hidden = false;
+
+  let agent = null, metrics = null, health = null, invocations = null;
+  const safe = (p) => p.catch(e => { console.error('detail fetch failed:', e.message); return null; });
+  [agent, metrics, health, invocations] = await Promise.all([
+    safe(api(`/agents/${encodeURIComponent(id)}`)),
+    safe(api(`/metrics/agents/${encodeURIComponent(id)}`)),
+    safe(api(`/agents/${encodeURIComponent(id)}/health`)),
+    safe(api(`/agents/${encodeURIComponent(id)}/invocations?limit=25`))
+  ]);
+
+  if (!agent) {
+    document.getElementById('detailName').textContent = 'Agent not found';
+    return;
+  }
+
+  document.getElementById('detailName').textContent = agent.name;
+  document.getElementById('detailMeta').innerHTML =
+    `${escapeHtml(agent.id)} · <span class="status-pill status-${escapeHtml(agent.status)}">${escapeHtml(agent.status)}</span>`;
+
+  // Overview
+  const field = (k, v) => `
+    <div class="detail-field">
+      <span class="k">${escapeHtml(k)}</span>
+      <span class="v">${v ?? '<span class="muted">—</span>'}</span>
+    </div>`;
+  document.getElementById('detailOverview').innerHTML = [
+    field('Provider', escapeHtml(agent.provider)),
+    field('Hosting',  escapeHtml(agent.hosting)),
+    field('Protocols', (agent.protocols || []).map(p => escapeHtml(p)).join(', ') || null),
+    field('Auth',     escapeHtml(agent.auth_type)),
+    field('Endpoint', agent.endpoint_url
+      ? `<a href="${escapeHtml(agent.endpoint_url)}" target="_blank">${escapeHtml(agent.endpoint_url)}</a>`
+      : null),
+    field('Proxy enabled', agent.proxy_enabled ? 'yes' : 'no'),
+    field('Created', escapeHtml(agent.created_at)),
+    field('Capabilities',
+      (agent.capabilities || []).length
+        ? (agent.capabilities || []).map(c => `<span class="cap-pill">${escapeHtml(c)}</span>`).join('')
+        : null),
+    field('Agent card', `<a href="/agents/${encodeURIComponent(agent.id)}/.well-known/agent.json" target="_blank">view</a>`)
+  ].join('');
+
+  // Metrics + sparkline
+  if (metrics) {
+    const inv = metrics.invocations || {};
+    document.getElementById('detailMetrics').innerHTML = [
+      field('Invocations 24h', inv.last_24h ?? 0),
+      field('Success rate',    inv.success_rate_pct != null ? inv.success_rate_pct + '%' : null),
+      field('Avg latency',     inv.avg_latency_ms != null ? inv.avg_latency_ms + ' ms' : null),
+      field('P50 / P95',
+        [inv.p50_latency_ms, inv.p95_latency_ms].some(v => v != null)
+          ? `${inv.p50_latency_ms ?? '—'} ms / ${inv.p95_latency_ms ?? '—'} ms`
+          : null),
+      field('Last 7d',         inv.last_7d ?? 0)
+    ].join('');
+
+    const hourly = (inv.hourly_last_24h || []).map(h => h.total || 0);
+    document.getElementById('detailSparkline').innerHTML = sparkline(hourly);
+  } else {
+    document.getElementById('detailMetrics').innerHTML = '<span class="muted">metrics unavailable</span>';
+  }
+
+  // Health
+  if (health) {
+    const checks = (health.checks || []).slice(0, 24).reverse();
+    const dots = Array.from({ length: 24 }).map((_, i) => {
+      const c = checks[i];
+      return `<span class="dot ${c ? escapeHtml(c.status) : ''}" title="${c ? escapeHtml(c.checked_at) : 'no check'}"></span>`;
+    }).join('');
+    document.getElementById('detailHealth').innerHTML = `
+      ${field('Uptime 24h', health.uptime_pct != null ? health.uptime_pct + '%' : null)}
+      ${field('Total checks', health.total_checks ?? 0)}
+      ${field('Last seen', escapeHtml(health.last_seen))}
+      <div class="dots" style="margin-top: 10px;">${dots}</div>`;
+  } else {
+    document.getElementById('detailHealth').innerHTML = '<span class="muted">no health data</span>';
+  }
+
+  // Recent invocations
+  if (invocations && invocations.invocations && invocations.invocations.length) {
+    const rows = invocations.invocations.map(i => `
+      <tr>
+        <td><span class="status-pill status-${escapeHtml(i.status === 'success' ? 'active' : 'inactive')}">${escapeHtml(i.status)}</span></td>
+        <td>${escapeHtml(i.mode || '—')}</td>
+        <td>${i.latency_ms != null ? i.latency_ms + ' ms' : '—'}</td>
+        <td class="muted">${escapeHtml(i.created_at)}</td>
+        <td class="muted">${escapeHtml(i.error_msg || '')}</td>
+      </tr>
+    `).join('');
+    document.getElementById('detailInvocations').innerHTML = `
+      <table class="data" style="width: 100%;">
+        <thead>
+          <tr>
+            <th>Status</th><th>Mode</th><th>Latency</th><th>When</th><th>Error</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  } else {
+    document.getElementById('detailInvocations').innerHTML = '<span class="muted">no invocations recorded</span>';
+  }
+}
+
 // ─────────────────────────────────────── Modals (agent + MCP)
 
 // Generic "Cancel" hook for any modal that has [data-close-modal="modalId"]
@@ -390,6 +536,15 @@ document.querySelectorAll('[data-close-modal]').forEach(btn => {
     const m = document.getElementById(btn.dataset.closeModal);
     if (m) m.hidden = true;
   });
+});
+
+// Document-level delegation: clicking any [data-detail-agent] opens the
+// detail modal. Survives table re-renders without re-binding.
+document.addEventListener('click', (e) => {
+  const link = e.target && e.target.closest && e.target.closest('[data-detail-agent]');
+  if (!link) return;
+  e.preventDefault();
+  openAgentDetail(link.dataset.detailAgent);
 });
 
 // ── Agent modal (add + edit) ────────────────────────────────────────────────

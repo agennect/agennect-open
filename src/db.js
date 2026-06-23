@@ -68,8 +68,9 @@ export function migrate() {
 
   runMigrationFile('../migrations/002_proxy.sql', { tolerateDuplicateColumn: true });
   runMigrationFile('../migrations/003_auth_audit.sql');
+  runMigrationFile('../migrations/004_webhooks.sql');
 
-  console.log('✓ Database migrated (001 + 002 + 003)');
+  console.log('✓ Database migrated (001 + 002 + 003 + 004)');
 }
 
 migrate();

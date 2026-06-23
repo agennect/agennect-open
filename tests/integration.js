@@ -1,4 +1,6 @@
 import '../src/load-env.js';
+import { createServer } from 'http';
+import { createHmac } from 'crypto';
 
 const BASE = process.env.REGISTRY_URL || 'http://localhost:3000';
 const TOKEN = process.env.ADMIN_TOKEN || 'change-me-before-deploy';
@@ -324,6 +326,116 @@ async function main() {
         })
       });
       check('revoked token → 401', afterRev.status === 401, `status=${afterRev.status}`);
+    }
+  });
+
+  await block('BLOCK 7.7 — OpenAPI + /v1 alias', async () => {
+    const j = await http('GET', '/openapi.json');
+    check('GET /openapi.json → 200', j.status === 200);
+    check('OpenAPI doc has openapi 3.1.x', /^3\.1/.test(j.body?.openapi || ''));
+    check('OpenAPI has paths block', !!j.body?.paths);
+
+    const y = await fetch(`${BASE}/openapi.yaml`, { signal: AbortSignal.timeout(8000) });
+    check('GET /openapi.yaml → 200', y.status === 200);
+    const yText = await y.text();
+    check('OpenAPI YAML starts with version', /^openapi:/m.test(yText));
+
+    // /v1 alias returns same shape as the top-level
+    const a = await http('GET', '/v1/agents?limit=1');
+    check('GET /v1/agents → 200', a.status === 200);
+    check('/v1/agents response has agents array', Array.isArray(a.body?.agents));
+  });
+
+  await block('BLOCK 7.8 — Webhooks (register + signed delivery)', async () => {
+    // 1. Spin up a tiny receiver
+    const received = [];
+    let resolveDelivery;
+    const deliveryPromise = new Promise((res) => { resolveDelivery = res; });
+
+    const receiver = await new Promise((res) => {
+      const s = createServer((req, resp) => {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+          received.push({
+            url: req.url,
+            method: req.method,
+            signature: req.headers['x-agennect-signature'],
+            body
+          });
+          resp.writeHead(200, { 'Content-Type': 'application/json' });
+          resp.end('{"ok":true}');
+          if (received.length === 1) resolveDelivery();
+        });
+      });
+      s.listen(0, '127.0.0.1', () => res(s));
+    });
+    const port = receiver.address().port;
+    const receiverUrl = `http://127.0.0.1:${port}/agennect-webhook`;
+
+    try {
+      // 2. Register the webhook for agent.create events
+      const reg = await http('POST', '/admin/webhooks', {
+        admin: true,
+        body: { name: 'integration-test', url: receiverUrl, events: ['agent.create'] }
+      });
+      check('POST /admin/webhooks (admin) → 201', reg.status === 201, `status=${reg.status}`);
+      check('webhook returns plaintext secret', typeof reg.body?.secret === 'string');
+      const webhookId = reg.body?.id;
+      const secret = reg.body?.secret;
+
+      // 3. Trigger an agent.create
+      const create = await http('POST', '/agents', {
+        admin: true,
+        body: {
+          name: 'WebhookTriggerAgent ' + Date.now(),
+          description: 'Created by integration suite to trigger a webhook delivery.',
+          provider: 'integration'
+        }
+      });
+      check('POST /agents (triggers webhook) → 201', create.status === 201);
+
+      // 4. Wait for delivery (up to ~3s)
+      await Promise.race([
+        deliveryPromise,
+        new Promise((_, rej) => setTimeout(() => rej(new Error('delivery timeout')), 3000))
+      ]).catch(() => {});
+
+      check('Webhook receiver got exactly 1 delivery', received.length === 1, `got ${received.length}`);
+
+      if (received[0]) {
+        const r = received[0];
+        check('Delivery has signature header', !!r.signature);
+        check('Delivery body is JSON with event=agent.create', (() => {
+          try {
+            const parsed = JSON.parse(r.body);
+            return parsed.event === 'agent.create';
+          } catch (e) { return false; }
+        })());
+
+        // Verify the signature with sha256(secret) as the key
+        if (r.signature && secret) {
+          const parts = Object.fromEntries(r.signature.split(',').map(p => p.split('=')));
+          const key = createHmac('sha256', '')   // placeholder
+            .update('')
+            .digest();
+          // Need sha256 of the secret as the actual HMAC key
+          const { createHash } = await import('crypto');
+          const signingKey = createHash('sha256').update(secret).digest('hex');
+          const expected = createHmac('sha256', signingKey)
+            .update(`${parts.t}.${r.body}`)
+            .digest('hex');
+          check('HMAC signature verifies against sha256(secret)', expected === parts.v1, `expected ${expected} got ${parts.v1}`);
+        }
+      }
+
+      // 5. Clean up the webhook
+      if (webhookId) {
+        const del = await http('DELETE', `/admin/webhooks/${webhookId}`, { admin: true });
+        check('DELETE /admin/webhooks/:id → 200', del.status === 200);
+      }
+    } finally {
+      receiver.close();
     }
   });
 
