@@ -121,6 +121,38 @@
     </section>
   </main>
 
+  <!-- Agent detail modal -->
+  <div class="modal" id="agentDetailModal" hidden>
+    <div class="modal-inner modal-wide">
+      <div class="detail-head">
+        <div>
+          <h2 id="detailName">Agent</h2>
+          <div class="muted" id="detailMeta"></div>
+        </div>
+        <button type="button" class="ghost" data-close-modal="agentDetailModal">Close</button>
+      </div>
+      <div class="detail-grid">
+        <section class="detail-block">
+          <h3>Overview</h3>
+          <div id="detailOverview"></div>
+        </section>
+        <section class="detail-block">
+          <h3>Invocations (24h)</h3>
+          <div id="detailMetrics"></div>
+          <div id="detailSparkline" class="sparkline-wrap"></div>
+        </section>
+        <section class="detail-block">
+          <h3>Health (24h)</h3>
+          <div id="detailHealth"></div>
+        </section>
+        <section class="detail-block full">
+          <h3>Recent invocations</h3>
+          <div id="detailInvocations"></div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <!-- Agent modal (add + edit) -->
   <div class="modal" id="agentModal" hidden>
     <div class="modal-inner">

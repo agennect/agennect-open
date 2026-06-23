@@ -1,0 +1,537 @@
+openapi: 3.1.0
+info:
+  title: agennect-open registry
+  description: |
+    Self-hosted A2A (Agent-to-Agent) registry with an MCP server directory.
+    Every endpoint listed here is also reachable without the `/v1` prefix for
+    backward compatibility, but `/v1` is the canonical path going forward.
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000/v1
+    description: Local dev (v1, canonical)
+  - url: http://localhost:3000
+    description: Local dev (legacy unversioned)
+
+security:
+  - bearerAuth: []
+  - {}   # many GET routes are public
+
+tags:
+  - name: agents
+  - name: mcp
+  - name: invocations
+  - name: metrics
+  - name: admin
+  - name: meta
+
+paths:
+  /openapi.json:
+    get:
+      tags: [meta]
+      summary: Machine-readable API spec
+      security: []
+      responses:
+        '200':
+          description: OpenAPI 3.1 document
+          content: { application/json: { schema: { type: object } } }
+
+  /health:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:    { type: string, example: ok }
+                  version:   { type: string, example: 0.1.0 }
+                  timestamp: { type: string, format: date-time }
+
+  /agents:
+    get:
+      tags: [agents]
+      summary: List agents
+      security: []
+      parameters:
+        - { in: query, name: status,   schema: { type: string, enum: [active, inactive, degraded] } }
+        - { in: query, name: protocol, schema: { type: string } }
+        - { in: query, name: hosting,  schema: { type: string, enum: [referenced, hosted] } }
+        - { in: query, name: page,     schema: { type: integer, default: 1 } }
+        - { in: query, name: limit,    schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents: { type: array, items: { $ref: '#/components/schemas/Agent' } }
+                  total:  { type: integer }
+                  page:   { type: integer }
+                  limit:  { type: integer }
+    post:
+      tags: [agents]
+      summary: Register a new agent
+      description: Requires write or admin scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:              { type: string }
+                  status:          { type: string, example: created }
+                  agent_card_url:  { type: string, format: uri }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /agents/search:
+    get:
+      tags: [agents]
+      summary: Semantic search by natural language
+      security: []
+      parameters:
+        - { in: query, name: q,     required: true, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, default: 10, maximum: 50 } }
+      responses:
+        '200':
+          description: Ranked results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query: { type: string }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agent: { $ref: '#/components/schemas/Agent' }
+                        score: { type: number }
+                        distance: { type: number }
+
+  /agents/{id}:
+    get:
+      tags: [agents]
+      summary: Agent detail
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: Agent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [agents]
+      summary: Update agent (partial)
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUpdate' }
+      responses:
+        '200':
+          description: Updated agent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Agent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [agents]
+      summary: Soft-delete (status=inactive)
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: Ok
+          content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/{id}/.well-known/agent.json:
+    get:
+      tags: [agents]
+      summary: A2A Agent Card (schema v0.2)
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: Card
+          content: { application/json: { schema: { type: object } } }
+
+  /agents/{id}/report:
+    post:
+      tags: [invocations]
+      summary: Report a Mode B (SDK) invocation
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InvocationReport' }
+      responses:
+        '200':
+          description: Logged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  invocation_id: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /agents/{id}/tasks:
+    post:
+      tags: [invocations]
+      summary: Mode A (proxy) — registry forwards the task
+      description: Only available when agent.proxy_enabled = true; otherwise returns 422 with a hint pointing at /report.
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/A2ATask' }
+      responses:
+        '200':
+          description: A2A response with _agennect metadata
+          content: { application/json: { schema: { type: object } } }
+        '422':
+          description: Proxy not enabled for this agent
+        '502':
+          description: Upstream agent error
+        '504':
+          description: Upstream agent timeout
+
+  /agents/{id}/invocations:
+    get:
+      tags: [invocations]
+      summary: Recent invocations (last N, default 50, max 200)
+      security: []
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: List of invocations
+          content: { application/json: { schema: { type: object } } }
+
+  /agents/{id}/health:
+    get:
+      tags: [agents]
+      summary: Health checks for the last 24h
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200':
+          description: Uptime + per-check list
+          content: { application/json: { schema: { type: object } } }
+
+  /mcp:
+    get:
+      tags: [mcp]
+      summary: List MCP servers
+      security: []
+      parameters:
+        - { in: query, name: category,  schema: { type: string } }
+        - { in: query, name: transport, schema: { type: string, enum: [stdio, http, sse] } }
+        - { in: query, name: status,    schema: { type: string, enum: [active, inactive, all] } }
+        - { in: query, name: page,      schema: { type: integer, default: 1 } }
+        - { in: query, name: limit,     schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200':
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  servers: { type: array, items: { $ref: '#/components/schemas/McpServer' } }
+                  total:   { type: integer }
+                  page:    { type: integer }
+                  limit:   { type: integer }
+    post:
+      tags: [mcp]
+      summary: Register an MCP server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/McpCreate' }
+      responses:
+        '201': { description: Created }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /mcp/{id}:
+    get:
+      tags: [mcp]
+      summary: MCP server detail
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Server }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [mcp]
+      summary: Update MCP server
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/McpUpdate' } } }
+      responses:
+        '200': { description: Updated }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [mcp]
+      summary: Soft-delete MCP server
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        '200': { description: Ok }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /metrics:
+    get:
+      tags: [metrics]
+      summary: Global registry KPIs
+      security: []
+      responses: { '200': { description: KPIs, content: { application/json: { schema: { type: object } } } } }
+
+  /metrics/agents/{id}:
+    get:
+      tags: [metrics]
+      summary: Per-agent metrics with percentiles + hourly series
+      security: []
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Per-agent metrics } }
+
+  /metrics/timeseries:
+    get:
+      tags: [metrics]
+      summary: Hourly invocation series (optionally filtered)
+      security: []
+      parameters:
+        - { in: query, name: hours,    schema: { type: integer, default: 24, maximum: 720 } }
+        - { in: query, name: agent_id, schema: { type: string } }
+      responses: { '200': { description: Hourly buckets } }
+
+  /admin/tokens:
+    get:
+      tags: [admin]
+      summary: List tokens (metadata only)
+      responses: { '200': { description: Tokens } }
+    post:
+      tags: [admin]
+      summary: Mint a new token (returns plaintext once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scope]
+              properties:
+                name:  { type: string }
+                scope: { type: string, enum: [read, write, admin] }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:    { type: string }
+                  name:  { type: string }
+                  scope: { type: string }
+                  token: { type: string, description: "Shown exactly once." }
+
+  /admin/tokens/{id}:
+    delete:
+      tags: [admin]
+      summary: Soft-revoke a token
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Ok } }
+
+  /admin/audit:
+    get:
+      tags: [admin]
+      summary: Filterable audit log
+      parameters:
+        - { in: query, name: action,      schema: { type: string } }
+        - { in: query, name: target_type, schema: { type: string } }
+        - { in: query, name: target_id,   schema: { type: string } }
+        - { in: query, name: limit,       schema: { type: integer, default: 100, maximum: 500 } }
+      responses: { '200': { description: Entries } }
+
+  /admin/webhooks:
+    get:
+      tags: [admin]
+      summary: List webhooks
+      responses: { '200': { description: Webhooks } }
+    post:
+      tags: [admin]
+      summary: Register a webhook (returns plaintext secret once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, url, events]
+              properties:
+                name:   { type: string }
+                url:    { type: string, format: uri }
+                events: { type: array, items: { type: string }, description: "e.g. agent.create, mcp.update, * for all" }
+      responses: { '201': { description: Created } }
+
+  /admin/webhooks/{id}:
+    delete:
+      tags: [admin]
+      summary: Delete a webhook
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { '200': { description: Ok } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Token from POST /admin/tokens. The bootstrap value is the
+        ADMIN_TOKEN env var, auto-registered as the admin-scope row
+        named 'env-bootstrap' on first boot.
+  responses:
+    BadRequest:   { description: Validation failed,  content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: No token,           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden:    { description: Token scope insufficient, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound:     { description: Not found,          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Agent:
+      type: object
+      properties:
+        id:           { type: string }
+        name:         { type: string }
+        description:  { type: string }
+        provider:     { type: string }
+        version:      { type: string }
+        protocols:    { type: array, items: { type: string } }
+        endpoint_url: { type: string, format: uri, nullable: true }
+        auth_type:    { type: string, enum: [none, apikey, oauth] }
+        auth_header:  { type: string, nullable: true }
+        status:       { type: string, enum: [active, inactive, degraded] }
+        hosting:      { type: string, enum: [referenced, hosted] }
+        capabilities: { type: array, items: { type: string } }
+        tags:         { type: array, items: { type: string } }
+        proxy_enabled: { type: boolean }
+        created_at:   { type: string, format: date-time }
+        updated_at:   { type: string, format: date-time }
+    AgentCreate:
+      type: object
+      required: [name, description, provider]
+      properties:
+        name:         { type: string }
+        description:  { type: string, minLength: 20 }
+        provider:     { type: string }
+        version:      { type: string }
+        protocols:    { type: array, items: { type: string } }
+        endpoint_url: { type: string, format: uri }
+        auth_type:    { type: string, enum: [none, apikey, oauth] }
+        auth_header:  { type: string }
+        hosting:      { type: string, enum: [referenced, hosted] }
+        capabilities: { type: array, items: { type: string } }
+        tags:         { type: array, items: { type: string } }
+    AgentUpdate:
+      allOf:
+        - $ref: '#/components/schemas/AgentCreate'
+      type: object
+      properties:
+        status: { type: string, enum: [active, inactive, degraded] }
+        proxy_enabled: { type: boolean }
+        proxy_timeout_ms: { type: integer }
+    McpServer:
+      type: object
+      properties:
+        id:          { type: string }
+        name:        { type: string }
+        description: { type: string }
+        transport:   { type: string, enum: [stdio, http, sse] }
+        config_url:  { type: string, nullable: true }
+        package_url: { type: string, nullable: true }
+        category:    { type: string, nullable: true }
+        author:      { type: string, nullable: true }
+        status:      { type: string, enum: [active, inactive] }
+        tools:       { type: array, items: { type: object } }
+    McpCreate:
+      type: object
+      required: [name, description, transport]
+      properties:
+        name:        { type: string }
+        description: { type: string }
+        transport:   { type: string, enum: [stdio, http, sse] }
+        config_url:  { type: string, format: uri }
+        package_url: { type: string, format: uri }
+        category:    { type: string }
+        author:      { type: string }
+        tools:       { type: array, items: { type: object } }
+    McpUpdate:
+      $ref: '#/components/schemas/McpCreate'
+    InvocationReport:
+      type: object
+      required: [latency_ms, status]
+      properties:
+        latency_ms:      { type: number, minimum: 0 }
+        status:          { type: string, enum: [success, error, timeout] }
+        request_size:    { type: integer, minimum: 0 }
+        response_size:   { type: integer, minimum: 0 }
+        error_msg:       { type: string }
+        caller_agent_id: { type: string }
+    A2ATask:
+      type: object
+      properties:
+        id:      { type: string }
+        message:
+          type: object
+          properties:
+            role:  { type: string, example: user }
+            parts:
+              type: array
+              items:
+                type: object
+                properties:
+                  type: { type: string }
+                  text: { type: string }
+        context: { type: object }

@@ -1,6 +1,8 @@
 import { db } from './db.js';
+import { dispatchEvent } from './webhooks.js';
 
 // Append-only journal. Never throws — auditing must not block requests.
+// Also fans out the event to any matching webhook subscribers.
 export function logAudit({
   actor_token_id = null,
   actor_name = null,
@@ -30,6 +32,19 @@ export function logAudit({
     );
   } catch (e) {
     console.error('logAudit failed:', e.message);
+  }
+
+  // Fire-and-forget webhook dispatch. dispatchEvent never throws.
+  try {
+    dispatchEvent(action, {
+      actor: actor_name,
+      target_type,
+      target_id,
+      before,
+      after
+    });
+  } catch (e) {
+    console.error('dispatchEvent (from audit) failed:', e.message);
   }
 }
 

@@ -50,6 +50,102 @@ npm run seed
 
 ---
 
+## API versioning
+
+Every route is mounted at both the canonical `/v1` prefix and the
+top-level unversioned path. New consumers should use `/v1`. The
+unversioned aliases are kept for backward compat with the dashboard,
+seed script, and earlier README examples.
+
+```bash
+curl http://localhost:3000/v1/metrics
+curl http://localhost:3000/metrics      # same response
+```
+
+## OpenAPI spec
+
+The full surface is described in `docs/openapi.yaml` (OpenAPI 3.1) and
+served by the registry itself:
+
+| Path              | Format                                    |
+|-------------------|-------------------------------------------|
+| `/openapi.yaml`   | Raw YAML (the authored form)              |
+| `/openapi.json`   | Same spec parsed to JSON                  |
+
+Paste the URL into Swagger UI, Stoplight, Postman, or any OpenAPI-aware
+client to generate SDKs or browse the API interactively.
+
+```bash
+curl http://localhost:3000/openapi.json | jq '.paths | keys'
+```
+
+## Webhooks
+
+The registry can POST signed JSON to one or more URLs whenever an
+auditable event happens. Events match the audit log's action names:
+`agent.create`, `agent.update`, `agent.delete`, `mcp.create`,
+`mcp.update`, `mcp.delete`, `token.create`, `token.revoke`,
+`webhook.create`, `webhook.delete`, or `*` for all of the above.
+
+### Register a webhook
+
+```bash
+curl -X POST http://localhost:3000/admin/webhooks \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ops-slack-bridge",
+    "url":  "https://your.service/agennect-hook",
+    "events": ["agent.create", "agent.delete"]
+  }'
+# → { "id": "...", "secret": "whsec_…", "warning": "Shown exactly once" }
+```
+
+### Payload + signature
+
+The receiver gets a `POST` with this body:
+
+```json
+{
+  "id": "<uuid>",
+  "event": "agent.create",
+  "delivered_at": "2026-06-22T14:00:00.000Z",
+  "data": {
+    "actor": "env-bootstrap",
+    "target_type": "agent",
+    "target_id": "dataoracle-abcd",
+    "before": null,
+    "after": { "name": "DataOracle", "provider": "Agennect", "status": "active" }
+  }
+}
+```
+
+And this header:
+
+```
+X-Agennect-Signature: t=1719060000,v1=<hex>
+```
+
+To verify: compute `HMAC-SHA256(sha256(secret), t + "." + rawBody)` and
+compare against `v1` in constant time. Node:
+
+```js
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
+
+function verify(rawBody, sigHeader, secret) {
+  const parts = Object.fromEntries(sigHeader.split(',').map(p => p.split('=')));
+  const key = createHash('sha256').update(secret).digest('hex');
+  const expected = createHmac('sha256', key).update(`${parts.t}.${rawBody}`).digest('hex');
+  return timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(parts.v1, 'hex'));
+}
+```
+
+Deliveries are fire-and-forget with a 5s timeout. Errors are recorded
+on the webhook row (`last_status`, `last_error`, `failure_count`); the
+mutation that triggered the event always succeeds even if delivery fails.
+
+---
+
 ## Authentication & authorization
 
 Every write endpoint requires a Bearer token. Tokens live in the `tokens`
@@ -160,6 +256,16 @@ All settings come from environment variables (see `.env.example`).
 | GET    | `/admin/tokens`                   | List tokens (metadata only — no value).    |
 | DELETE | `/admin/tokens/:id`               | Soft-revoke a token.                        |
 | GET    | `/admin/audit`                    | Read audit log (filters: action, target_type, target_id, limit). |
+| POST   | `/admin/webhooks`                 | Register a webhook (returns plaintext secret once). |
+| GET    | `/admin/webhooks`                 | List webhooks with delivery stats.         |
+| DELETE | `/admin/webhooks/:id`             | Delete a webhook.                          |
+
+### Meta
+
+| Method | Path             | Description                          |
+|--------|------------------|--------------------------------------|
+| GET    | `/openapi.yaml`  | Authored OpenAPI 3.1 spec (YAML).    |
+| GET    | `/openapi.json`  | Same spec, served as JSON.           |
 
 ### A2A invocation
 
