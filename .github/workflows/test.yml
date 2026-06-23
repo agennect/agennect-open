@@ -33,6 +33,10 @@ jobs:
           ADMIN_TOKEN: ci-test-token
           # Skip background health-check loop during tests.
           HEALTH_CHECK_INTERVAL: '999999999'
+          # Deterministic in-process embedder so semantic-search tests
+          # don't need API keys and ranking stays reproducible.
+          LLM_PROVIDER: mock
+          EMBEDDING_DIMS: '1024'
 
       - name: Wait for /health
         run: |

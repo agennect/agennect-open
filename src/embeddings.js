@@ -9,8 +9,38 @@ export async function embed(text) {
     case 'anthropic': return embedVoyage(text);
     case 'openai':    return embedOpenAI(text);
     case 'ollama':    return embedOllama(text);
+    case 'mock':      return embedMock(text);
     default: throw new Error(`Unknown LLM_PROVIDER: ${PROVIDER}`);
   }
+}
+
+// Deterministic bag-of-words style embedder, used by CI so semantic-search
+// tests don't need a real API key. Same text always yields the same vector;
+// texts sharing tokens cluster near each other under cosine distance.
+function embedMock(text) {
+  const dims = parseInt(process.env.EMBEDDING_DIMS || '1024');
+  const vec = new Array(dims).fill(0);
+  const tokens = String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(t => t.length > 1);
+
+  for (const tok of tokens) {
+    let h = 5381;
+    for (let i = 0; i < tok.length; i++) {
+      h = (h * 33) ^ tok.charCodeAt(i);
+    }
+    const idx = Math.abs(h | 0) % dims;
+    vec[idx] += 1;
+  }
+
+  // L2-normalize so cosine distance behaves nicely.
+  let mag = 0;
+  for (const v of vec) mag += v * v;
+  mag = Math.sqrt(mag) || 1;
+  for (let i = 0; i < dims; i++) vec[i] /= mag;
+
+  return vec;
 }
 
 async function embedVoyage(text) {

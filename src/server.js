@@ -13,6 +13,7 @@ import { startHealthChecks } from './health.js';
 import { bootstrapEnvToken, verifyToken, scopeSatisfies } from './auth.js';
 import { findUserById } from './users.js';
 import { db } from './db.js';
+import { logger, runWithRequestContext } from './logger.js';
 
 const app = new Hono();
 
@@ -25,6 +26,30 @@ function resolveCorsOrigin(reqOrigin) {
   if (reqOrigin && CORS_ORIGINS.includes(reqOrigin)) return reqOrigin;
   return null; // not allowed
 }
+
+// ── Request-id + access log ───────────────────────────────────────────────
+// Every request runs inside an AsyncLocalStorage context with a generated
+// req_id. logger.* calls anywhere downstream automatically include it.
+// Exposes the id to clients via X-Request-Id so they can correlate.
+app.use('*', async (c, next) => {
+  const reqId = c.req.header('X-Request-Id') || crypto.randomUUID();
+  const started = Date.now();
+  c.set('reqId', reqId);
+  c.header('X-Request-Id', reqId);
+
+  await runWithRequestContext({ req_id: reqId }, async () => {
+    try {
+      await next();
+    } finally {
+      logger.info('http', {
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        duration_ms: Date.now() - started
+      });
+    }
+  });
+});
 
 // ── Security headers ──────────────────────────────────────────────────────
 app.use('*', async (c, next) => {
@@ -123,7 +148,7 @@ app.get('/health', (c) =>
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 app.onError((err, c) => {
-  console.error('Unhandled error:', err.message);
+  logger.error('unhandled error', { err: err.message, stack: err.stack });
   return c.json({ error: err.message }, 500);
 });
 
@@ -137,13 +162,11 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, () => {
-  console.log(`\n🟢 agennect-open registry running`);
-  console.log(`   API:       http://${HOST}:${PORT}/agents`);
-  console.log(`   Dashboard: http://${HOST}:${PORT}/dashboard`);
-  console.log(`   Metrics:   http://${HOST}:${PORT}/metrics`);
-  console.log(`   MCP:       http://${HOST}:${PORT}/mcp`);
-  console.log(`   Admin:     http://${HOST}:${PORT}/admin/tokens`);
-  console.log(`   CORS:      ${CORS_ORIGINS.join(', ')}\n`);
+  logger.info('agennect-open registry running', {
+    host: HOST,
+    port: PORT,
+    cors: CORS_ORIGINS.join(',')
+  });
 });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────
@@ -151,26 +174,26 @@ let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n${signal} received — draining…`);
+  logger.info('shutdown started', { signal });
 
   if (healthCheckHandle) clearInterval(healthCheckHandle);
 
   // 15s upper bound; force exit if HTTP server doesn't drain in time.
   const forceTimer = setTimeout(() => {
-    console.error('Drain timeout exceeded, forcing exit');
+    logger.error('drain timeout exceeded, forcing exit');
     process.exit(1);
   }, 15000);
   forceTimer.unref();
 
   server.close((err) => {
-    if (err) console.error('HTTP server close error:', err.message);
+    if (err) logger.error('http server close error', { err: err.message });
     try {
       // Checkpoint WAL so the DB file on disk is fully consistent.
       db.pragma('wal_checkpoint(TRUNCATE)');
       db.close();
-      console.log('✓ Database closed cleanly');
+      logger.info('database closed cleanly');
     } catch (e) {
-      console.error('DB close error:', e.message);
+      logger.error('db close error', { err: e.message });
     }
     clearTimeout(forceTimer);
     process.exit(0);
