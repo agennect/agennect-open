@@ -348,6 +348,40 @@ All settings come from environment variables (see `.env.example`).
 |--------|------------------|--------------------------------------|
 | GET    | `/openapi.yaml`  | Authored OpenAPI 3.1 spec (YAML).    |
 | GET    | `/openapi.json`  | Same spec, served as JSON.           |
+| GET    | `/llms.txt`      | Concise, LLM-readable API summary.   |
+
+---
+
+## Operations
+
+### Structured logging
+
+The server logs JSON lines to stdout (one parseable object per line) and
+echoes a unique `X-Request-Id` header on every response so you can trace
+a single request through the logs. Override via env:
+
+- `LOG_LEVEL=debug|info|warn|error` (default `info`)
+- `LOG_PRETTY=1` switches to a human-readable single-line format
+  (default in dev / when `NODE_ENV != production`)
+
+Clients can pass their own `X-Request-Id` header and the server will
+honor it instead of minting one.
+
+### Mock embeddings for CI / offline dev
+
+Set `LLM_PROVIDER=mock` to use a deterministic bag-of-words embedder
+that needs no API key. Same text always produces the same vector; texts
+sharing tokens cluster under cosine distance. Used by `.github/workflows/test.yml`
+so the semantic-search integration tests run hermetically.
+
+### Dashboard theme
+
+Toggle in the topbar (◐ for dark / ☾ for light); choice persists in
+localStorage. Default is dark.
+
+### Reporting a vulnerability
+
+See [SECURITY.md](SECURITY.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### A2A invocation
 

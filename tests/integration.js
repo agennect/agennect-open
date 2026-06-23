@@ -137,22 +137,55 @@ async function main() {
       check('GET /agents/search?q=... → 200', true);
       check('Search results is array', Array.isArray(r1.body?.results));
     } else if (r1.status === 500) {
-      // Embedding provider unavailable in test env — soft-pass
-      console.log('  ⚠ semantic search returned 500 (embedding provider unavailable) — skipping content checks');
+      // Embedding provider unavailable — soft-pass (LLM_PROVIDER=mock avoids this in CI)
+      console.log('  ⚠ semantic search returned 500 (no embedder configured) — skipping');
       passed++;
+      return;
     } else {
       check('GET /agents/search?q=... → 200', false, `status=${r1.status}`);
+      return;
     }
 
-    const r2 = await http('GET', '/agents/search?q=pipeline');
-    if (r2.status === 200 && r2.body?.results?.length) {
-      check('Search for "pipeline" returns at least one result', r2.body.results.length > 0);
-    } else if (r2.status === 500) {
-      console.log('  ⚠ semantic search for "pipeline" skipped — embedding unavailable');
-      passed++;
-    } else {
-      console.log('  ⚠ no results for "pipeline" — empty index acceptable');
-      passed++;
+    // Strict ranking check: register two probe agents whose embedding text
+    // is dominated by different vocab, then search for each and verify the
+    // matching agent ranks first. Deterministic under LLM_PROVIDER=mock;
+    // real embedders should also rank correctly.
+    const pipelineAgent = await http('POST', '/agents', {
+      admin: true,
+      body: {
+        name: 'SearchProbePipeline ' + Date.now(),
+        description: 'Pipeline pipeline pipeline ELT dbt airflow scheduler orchestration',
+        provider: 'integration',
+        capabilities: ['pipeline', 'dbt', 'airflow']
+      }
+    });
+    const govAgent = await http('POST', '/agents', {
+      admin: true,
+      body: {
+        name: 'SearchProbeGovernance ' + Date.now(),
+        description: 'Governance governance lineage classification PII RBAC compliance audit DAMA',
+        provider: 'integration',
+        capabilities: ['governance', 'PII', 'RBAC']
+      }
+    });
+
+    if (pipelineAgent.body?.id && govAgent.body?.id) {
+      const pId = pipelineAgent.body.id;
+      const gId = govAgent.body.id;
+
+      const pipeRes = await http('GET', '/agents/search?q=pipeline+orchestration&limit=5');
+      check('Search "pipeline orchestration" returns results', (pipeRes.body?.results || []).length > 0);
+      const topP = pipeRes.body?.results?.[0]?.agent?.id;
+      check('Top result is the pipeline probe', topP === pId, `top=${topP}, want=${pId}`);
+
+      const govRes = await http('GET', '/agents/search?q=governance+lineage&limit=5');
+      check('Search "governance lineage" returns results', (govRes.body?.results || []).length > 0);
+      const topG = govRes.body?.results?.[0]?.agent?.id;
+      check('Top result is the governance probe', topG === gId, `top=${topG}, want=${gId}`);
+
+      // Cleanup
+      await http('DELETE', `/agents/${pId}`, { admin: true });
+      await http('DELETE', `/agents/${gId}`, { admin: true });
     }
   });
 
@@ -585,6 +618,26 @@ async function main() {
     } finally {
       receiver.close();
     }
+  });
+
+  await block('BLOCK 8.2 — Meta: llms.txt + request-id', async () => {
+    const llms = await fetch(`${BASE}/llms.txt`, { signal: AbortSignal.timeout(8000) });
+    check('GET /llms.txt → 200', llms.status === 200);
+    const ct = llms.headers.get('content-type') || '';
+    check('llms.txt content-type is text/plain', /text\/plain/.test(ct), `got ${ct}`);
+    const body = await llms.text();
+    check('llms.txt mentions /v1/agents', body.includes('/v1/agents'));
+
+    // Server should echo client-provided X-Request-Id; otherwise mint one
+    const h = await fetch(`${BASE}/health`, {
+      signal: AbortSignal.timeout(8000),
+      headers: { 'X-Request-Id': 'integration-probe-id-123' }
+    });
+    check('X-Request-Id echoed back', h.headers.get('x-request-id') === 'integration-probe-id-123');
+
+    const h2 = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(8000) });
+    const rid = h2.headers.get('x-request-id') || '';
+    check('X-Request-Id minted when absent', rid.length >= 8);
   });
 
   await block('BLOCK 7 — Dashboard', async () => {

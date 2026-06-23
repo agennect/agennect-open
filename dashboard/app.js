@@ -1,5 +1,22 @@
 console.log('[dashboard] app.js loaded');
 
+// ── Theme (light / dark) ──────────────────────────────────────────────────
+const THEME_KEY = 'agennect_theme';
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark');
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.textContent = t === 'light' ? '☾' : '◐';
+}
+applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
+document.addEventListener('click', (e) => {
+  if (!e.target.closest || !e.target.closest('#themeToggle')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const next = (localStorage.getItem(THEME_KEY) || 'dark') === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+});
+
 window.addEventListener('error', (e) => {
   console.error('[dashboard] uncaught error:', e.message, 'at', e.filename + ':' + e.lineno);
 });

@@ -1,0 +1,128 @@
+# agennect-open
+
+> Self-hosted A2A (Agent-to-Agent) registry with an MCP (Model Context
+> Protocol) server directory. Single Node 20 container, SQLite-backed,
+> vanilla HTML dashboard. The open-source core of Agennect.
+
+Use this file to learn how to register agents, list MCP servers, and
+record invocations. Every endpoint listed here is reachable at both
+`/v1/<path>` (canonical) and `/<path>` (legacy alias).
+
+## Auth model
+
+- `read` scope: most GETs are public and need no auth.
+- `write` scope: required for `POST/PUT/DELETE /agents` and `/mcp`.
+  Tokens stamp `owner_user_id` on resources they create; they can only
+  mutate their own.
+- `admin` scope: required for `/admin/*` (tokens, users, audit,
+  webhooks). Admins can mutate anything.
+- Header: `Authorization: Bearer <token>`. The dashboard exchanges a
+  Firebase ID token for a session token via `POST /auth/login`.
+
+## Key endpoints
+
+### Registering an agent (write or admin)
+
+POST /v1/agents
+```json
+{
+  "name": "DataOracle",
+  "description": "Specialized agent for exploratory data analysis (min 20 chars)",
+  "provider": "Agennect",
+  "protocols": ["A2A"],
+  "endpoint_url": "https://your.agent/tasks",
+  "hosting": "referenced",
+  "auth_type": "none",
+  "capabilities": ["EDA", "SQL"]
+}
+```
+
+Response 201:
+```json
+{ "id": "dataoracle-ab", "status": "created", "agent_card_url": "..." }
+```
+
+### Discovery
+
+- `GET /v1/agents` — list, filters: `status`, `protocol`, `hosting`,
+  `mine` (when authed), `page`, `limit`.
+- `GET /v1/agents/search?q=<text>` — semantic search via sqlite-vec.
+- `GET /v1/agents/{id}` — full agent record.
+- `GET /v1/agents/{id}/.well-known/agent.json` — A2A Agent Card.
+- `GET /v1/mcp` — list MCP servers.
+
+### Reporting invocations (Mode B — recommended)
+
+POST /v1/agents/{id}/report
+```json
+{
+  "latency_ms": 340,
+  "status": "success",
+  "request_size": 512,
+  "response_size": 1024
+}
+```
+
+Response 200: `{ "ok": true, "invocation_id": "..." }`.
+
+There are JS and Python SDKs at `src/sdk/reporter.{js,py}` that wrap
+this in two lines.
+
+### Invoking via proxy (Mode A — opt-in)
+
+Per-agent flag. Enable: `PUT /v1/agents/{id} { "proxy_enabled": true }`.
+Then `POST /v1/agents/{id}/tasks` with an A2A Task body. The registry
+forwards to the agent's `endpoint_url`, logs latency, and returns the
+response with an `_agennect` metadata block.
+
+### Metrics
+
+- `GET /v1/metrics` — global KPIs (p50/p95 latency, mode breakdown,
+  top agents, agents up/down).
+- `GET /v1/metrics/agents/{id}` — per-agent (p50/p95/p99 + hourly_last_24h).
+- `GET /v1/metrics/timeseries?hours=24&agent_id=...` — hourly buckets.
+
+### Webhooks (admin)
+
+- `POST /v1/admin/webhooks { name, url, events }` — events are dot-separated
+  (`agent.create`, `mcp.update`, `webhook.test`, `user.login`, ...) or `*`.
+- Delivery: signed POST with header
+  `X-Agennect-Signature: t=<unix>,v1=<hmac>`.
+  Signing key is `sha256(secret)`; verify with HMAC-SHA256.
+- `POST /v1/admin/webhooks/{id}/test` — fire a synthetic event for
+  receiver verification.
+
+## Schemas
+
+The full OpenAPI 3.1 spec is hand-maintained and served live:
+
+- YAML — `GET /openapi.yaml`
+- JSON — `GET /openapi.json`
+
+## Errors
+
+All errors are JSON: `{ "error": "<message>" }`.
+
+| Status | Meaning                                                         |
+|--------|-----------------------------------------------------------------|
+| 400    | Validation failed (zod error message in `error`)                |
+| 401    | Missing or invalid token                                        |
+| 403    | Token scope insufficient OR not the owner                       |
+| 404    | Resource not found                                              |
+| 422    | Proxy mode disabled (with a `hint` field)                       |
+| 502    | Proxy upstream returned non-2xx                                 |
+| 504    | Proxy upstream timed out                                        |
+
+## Constraints when writing client code
+
+- All requests SHOULD pass `X-Caller-ID: <name>` so the registry can
+  attribute calls in metrics and the audit log.
+- For Mode A proxy, forward auth to the upstream agent via
+  `X-Agent-Auth: <value>` — the registry never persists it.
+- Webhook receivers MUST verify the signature in constant time.
+- Token plaintexts are returned exactly once on creation. Lose it and
+  you have to mint a new one.
+
+## License
+
+MIT. https://github.com/agennect/agennect-open
