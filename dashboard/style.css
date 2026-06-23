@@ -535,3 +535,129 @@ td.actions button {
   white-space: pre-wrap;
   margin: 12px 0;
 }
+
+/* Connect floating chat */
+.connect-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 28px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+}
+
+.connect-fab:hover { transform: translateY(-1px); }
+.connect-fab-label { font-weight: 500; letter-spacing: 0.3px; }
+
+.connect-panel {
+  position: fixed;
+  right: 22px;
+  bottom: 80px;
+  z-index: 199;
+  width: 420px;
+  max-width: 95vw;
+  height: 560px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.connect-panel[hidden] { display: none; }
+
+.connect-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.connect-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.connect-head button {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.connect-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.connect-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.4;
+}
+
+.connect-msg.user {
+  align-self: flex-end;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.connect-msg.bot {
+  align-self: flex-start;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.connect-msg.system {
+  align-self: center;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.connect-input {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.connect-input input {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 4px;
+}
+
+.connect-input input:focus { outline: none; border-color: var(--accent); }
+.connect-input button { font-size: 12px; padding: 6px 14px; }

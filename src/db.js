@@ -71,8 +71,9 @@ export function migrate() {
   runMigrationFile('../migrations/004_webhooks.sql');
   runMigrationFile('../migrations/005_users.sql', { tolerateDuplicateColumn: true });
   runMigrationFile('../migrations/006_webhook_pause.sql', { tolerateDuplicateColumn: true });
+  runMigrationFile('../migrations/007_connect_agent.sql', { tolerateDuplicateColumn: true });
 
-  console.log('✓ Database migrated (001 + 002 + 003 + 004 + 005 + 006)');
+  console.log('✓ Database migrated (001 + 002 + 003 + 004 + 005 + 006 + 007)');
 }
 
 migrate();

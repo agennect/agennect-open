@@ -512,6 +512,77 @@ their transport (stdio/http/sse), config URL, tool schema, and author.
 
 ---
 
+## The Connect Agent
+
+The registry ships with one built-in agent: **Agennect Connect**
+(`id: agennect-connect`). It's a normal entry in `/agents` — searchable,
+has an Agent Card at `/agents/agennect-connect/.well-known/agent.json`,
+shows up in the dashboard — but its `is_builtin` flag tells the invoke
+router to dispatch `POST /agents/agennect-connect/tasks` to an in-process
+handler instead of fetching an `endpoint_url`. Skips the health-check loop
+for the same reason.
+
+### What it does
+
+Walks a caller through registering a new agent via A2A conversation,
+validates each field, and creates the agent (owned by whoever's session
+is making the request) using the same SQL the `POST /agents` route uses.
+
+### Two engines
+
+1. **LLM extractor (when configured)** — calls the chat provider chosen
+   by `LLM_PROVIDER` via `src/chat.js`, using structured tool-use so the
+   output is a strict JSON shape. The model pulls fields from free-form
+   input ("I want to register an agent called PipelineBot that does ELT
+   and dbt") and decides the next prompt. Supported providers:
+   `anthropic` (Claude via tool use), `openai` (function calling),
+   `ollama` (`format: json`). Configure the model via `CHAT_MODEL` env
+   (defaults: `claude-haiku-4-5-20251001`, `gpt-4o-mini`, `llama3.1`).
+2. **Rule-based state machine (always available)** — deterministic
+   walk: `name → description → provider → endpoint → capabilities →
+   review → submit`. Used as a fallback when the LLM path returns
+   `null` (no API key, `LLM_PROVIDER=mock`, or a network failure).
+
+### Using it via A2A
+
+```bash
+SESS=demo-$(date +%s)
+
+curl -X POST http://localhost:3000/agents/agennect-connect/tasks \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -nc --arg s "$SESS" '{
+    id: $s,
+    message: {role:"user", parts:[{type:"text", text:""}]},
+    context: { session_id: $s }
+  }')"
+# → bot: "Want me to help you register an agent or an MCP server?"
+
+# Each subsequent turn re-uses the same session_id; the bot remembers
+# what you've answered so far.
+```
+
+### Using it from the dashboard
+
+Click the floating **💬 Connect** button (bottom right) to open a chat
+panel. It stores its `session_id` in `sessionStorage`; the ↻ button
+starts a new session.
+
+### Env vars
+
+| Variable        | Default                          | Notes                                                      |
+|-----------------|----------------------------------|------------------------------------------------------------|
+| `LLM_PROVIDER`  | `anthropic`                      | Same env as embeddings: `anthropic`/`openai`/`ollama`/`mock`. |
+| `CHAT_MODEL`    | provider default (above)         | Override the chat model.                                   |
+| `ANTHROPIC_API_KEY` | —                            | Required for `anthropic` chat (real Claude API key).       |
+| `OPENAI_API_KEY`    | —                            | Required for `openai` chat.                                |
+| `OLLAMA_URL`        | `http://localhost:11434`     | Required for `ollama`.                                     |
+
+With `LLM_PROVIDER=mock`, the Connect Agent runs the state machine end
+to end — useful for offline dev and CI.
+
+---
+
 ## Self-hosted vs Agennect Cloud
 
 | Feature                          | agennect-open (this repo) | Agennect Cloud         |

@@ -640,6 +640,78 @@ async function main() {
     check('X-Request-Id minted when absent', rid.length >= 8);
   });
 
+  await block('BLOCK 8.5 — Connect Agent (built-in onboarding)', async () => {
+    // The connect agent should be bootstrapped automatically on server start.
+    const detail = await http('GET', '/agents/agennect-connect');
+    check('GET /agents/agennect-connect → 200', detail.status === 200);
+    check('agent is flagged is_builtin', detail.body?.is_builtin === 1);
+    check('agent owner is the system user',
+      detail.body?.owner_user_id === '00000000-0000-0000-0000-000000000001');
+
+    // Agent Card renders fine
+    const card = await http('GET', '/agents/agennect-connect/.well-known/agent.json');
+    check('agent card → 200', card.status === 200);
+    check('card schema_version 0.2', card.body?.schema_version === '0.2');
+    check('card has skills', Array.isArray(card.body?.skills) && card.body.skills.length > 0);
+
+    // Conversation: state-machine path (LLM_PROVIDER=mock in CI returns null,
+    // forcing the fallback). Step through the full flow and verify the agent
+    // is actually created.
+    const sess = 'integration-connect-' + Date.now();
+    const post = (text) => http('POST', '/agents/agennect-connect/tasks', {
+      admin: true,   // exercise as the bootstrap admin so ownership stamps deterministically
+      body: {
+        id: sess,
+        message: { role: 'user', parts: [{ type: 'text', text }] },
+        context: { session_id: sess }
+      }
+    });
+
+    const t0 = await post('');               // opener
+    check('turn 0 → 200', t0.status === 200);
+    check('opener mentions agent/mcp choice',
+      /agent|mcp/i.test(t0.body?.result?.parts?.[0]?.text || ''));
+
+    const t1 = await post('agent');          // pick path
+    check('turn 1 asks for name',
+      /name/i.test(t1.body?.result?.parts?.[0]?.text || ''));
+
+    const probeName = 'ConnectProbe ' + Date.now();
+    const t2 = await post(probeName);        // name
+    check('turn 2 asks for description',
+      /description/i.test(t2.body?.result?.parts?.[0]?.text || ''));
+
+    const t3 = await post('A concise probe agent created by the integration suite to exercise the Connect onboarding flow end to end.');
+    check('turn 3 asks for provider',
+      /provider/i.test(t3.body?.result?.parts?.[0]?.text || ''));
+
+    const t4 = await post('integration');    // provider
+    check('turn 4 asks for endpoint',
+      /endpoint/i.test(t4.body?.result?.parts?.[0]?.text || ''));
+
+    const t5 = await post('none');           // endpoint
+    check('turn 5 asks for capabilities',
+      /capabilit/i.test(t5.body?.result?.parts?.[0]?.text || ''));
+
+    const t6 = await post('testing, probe'); // capabilities → review
+    const reviewText = t6.body?.result?.parts?.[0]?.text || '';
+    check('turn 6 shows review with the chosen name',
+      reviewText.includes(probeName) && /create/i.test(reviewText));
+
+    const t7 = await post('yes');            // confirm → submit
+    check('turn 7 confirms creation', /agennect|registered|done/i.test(
+      t7.body?.result?.parts?.[0]?.text || ''));
+
+    // The new agent should exist in the registry now
+    const listed = await http('GET', '/agents?limit=100');
+    const created = (listed.body?.agents || []).find(a => a.name === probeName);
+    check('connect-created agent appears in /agents', !!created, `looked for name="${probeName}"`);
+    if (created) {
+      // Cleanup
+      await http('DELETE', `/agents/${created.id}`, { admin: true });
+    }
+  });
+
   await block('BLOCK 7 — Dashboard', async () => {
     const d = await fetch(`${BASE}/dashboard`, {
       redirect: 'manual',
