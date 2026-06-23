@@ -19,6 +19,8 @@
       <button class="tab" data-tab="agents">Agents</button>
       <button class="tab" data-tab="mcp">MCP Servers</button>
       <button class="tab" data-tab="health">Health</button>
+      <button class="tab admin-tab" data-tab="users" hidden>Users</button>
+      <button class="tab admin-tab" data-tab="webhooks" hidden>Webhooks</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
   </header>
@@ -101,6 +103,52 @@
       <div id="healthList"></div>
     </section>
 
+    <!-- USERS (admin only) -->
+    <section id="tab-users" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">Users</h2>
+        <button id="usersRefreshBtn" class="ghost">Refresh</button>
+      </div>
+      <table class="data" id="usersTable">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Provider</th>
+            <th>Agents</th>
+            <th>Last login</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- WEBHOOKS (admin only) -->
+    <section id="tab-webhooks" class="panel">
+      <div class="toolbar">
+        <h2 class="title-inline">Outbound webhooks</h2>
+        <button id="webhookRefreshBtn" class="ghost">Refresh</button>
+        <button id="webhookAddBtn" class="primary">+ Register webhook</button>
+      </div>
+      <table class="data" id="webhooksTable">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>URL</th>
+            <th>Events</th>
+            <th>Last status</th>
+            <th>Failures</th>
+            <th>State</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
     <!-- SETTINGS -->
     <section id="tab-settings" class="panel">
       <div class="block">
@@ -166,6 +214,41 @@
           <h3>Recent invocations</h3>
           <div id="detailInvocations"></div>
         </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Webhook add modal -->
+  <div class="modal" id="webhookAddModal" hidden>
+    <div class="modal-inner">
+      <h2>Register a webhook</h2>
+      <form id="webhookAddForm">
+        <label>Name *<input name="name" required /></label>
+        <label>URL *<input name="url" type="url" placeholder="https://your.service/agennect-hook" required /></label>
+        <label>Events
+          <div id="webhookEventsList" class="event-checks"></div>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close-modal="webhookAddModal">Cancel</button>
+          <button type="submit" class="primary">Create</button>
+        </div>
+        <p id="webhookAddError" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Webhook secret reveal modal (shown once) -->
+  <div class="modal" id="webhookSecretModal" hidden>
+    <div class="modal-inner">
+      <h2>Webhook secret</h2>
+      <p class="hint">
+        Copy this value now — it is shown <strong>exactly once</strong>.
+        Use <code>HMAC-SHA256(sha256(secret), t + "." + body)</code> to
+        verify the <code>X-Agennect-Signature</code> header on each delivery.
+      </p>
+      <pre id="webhookSecretValue" class="secret-block">…</pre>
+      <div class="modal-actions">
+        <button type="button" class="primary" data-close-modal="webhookSecretModal">Done</button>
       </div>
     </div>
   </div>

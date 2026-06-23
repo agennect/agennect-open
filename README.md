@@ -196,6 +196,23 @@ Implement `verifyIdToken(idToken)` in `src/auth-providers/<name>.js`,
 register it in `src/auth-providers/index.js`, then point
 `AUTH_PROVIDER` at it. The rest of the codebase doesn't change.
 
+### Managing users from the dashboard
+
+Admins get a **Users** tab listing every user with their email, role,
+provider, last-login, owned-agent count, and an Actions column for
+Promote/Demote and Disable/Enable. Both actions immediately revoke that
+user's open session tokens, so the new state takes effect on their next
+request. The synthetic `system` user (legacy data) is not modifiable.
+
+### Managing webhooks from the dashboard
+
+Admins also get a **Webhooks** tab with the registered subscribers,
+their last delivery status (color-coded), failure counter, and per-row
+**Test / Pause / Resume / Delete** actions. The Test button fires a
+synthetic `webhook.test` event so receivers can verify wiring without
+having to wait for a real mutation. Paused webhooks skip delivery
+entirely until resumed.
+
 ### Auth endpoints
 
 | Method | Path                | Description                                |
@@ -317,8 +334,12 @@ All settings come from environment variables (see `.env.example`).
 | GET    | `/admin/tokens`                   | List tokens (metadata only — no value).    |
 | DELETE | `/admin/tokens/:id`               | Soft-revoke a token.                        |
 | GET    | `/admin/audit`                    | Read audit log (filters: action, target_type, target_id, limit). |
+| GET    | `/admin/users`                    | List users with owned-resource counts.     |
+| PUT    | `/admin/users/:id`                | Change role (`user`/`admin`) or disable/enable. Auto-revokes the user's sessions. |
 | POST   | `/admin/webhooks`                 | Register a webhook (returns plaintext secret once). |
 | GET    | `/admin/webhooks`                 | List webhooks with delivery stats.         |
+| PUT    | `/admin/webhooks/:id`             | Pause or resume delivery (`{paused: true/false}`). |
+| POST   | `/admin/webhooks/:id/test`        | Fire a synthetic `webhook.test` event to this subscriber. |
 | DELETE | `/admin/webhooks/:id`             | Delete a webhook.                          |
 
 ### Meta

@@ -61,6 +61,10 @@ function updateAdminUI() {
   document.querySelectorAll('.admin-only').forEach(el => {
     el.hidden = !isAuthed();
   });
+  // Admin-only tabs (Users, Webhooks) are gated by isAdmin().
+  document.querySelectorAll('.admin-tab').forEach(el => {
+    el.hidden = !isAdmin();
+  });
   const status = document.getElementById('tokenStatus');
   if (status) {
     status.textContent = isAuthed()
@@ -177,6 +181,8 @@ document.addEventListener('click', (e) => {
   if (tab.dataset.tab === 'agents') loadAgents();
   if (tab.dataset.tab === 'mcp') loadMcp();
   if (tab.dataset.tab === 'overview') loadOverview();
+  if (tab.dataset.tab === 'users') loadUsers();
+  if (tab.dataset.tab === 'webhooks') loadWebhooks();
 });
 
 // ─────────────────────────────────────── Overview
@@ -480,6 +486,231 @@ async function loadHealth() {
     list.innerHTML = `<p class="muted">Error: ${escapeHtml(e.message)}</p>`;
   }
 }
+
+// ─────────────────────────────────────── Users (admin)
+
+async function loadUsers() {
+  const tbody = document.querySelector('#usersTable tbody');
+  tbody.innerHTML = `<tr><td colspan="8" class="muted">Loading…</td></tr>`;
+  try {
+    const data = await api('/admin/users');
+    if (!data.users.length) {
+      tbody.innerHTML = `<tr><td colspan="8" class="muted">No users yet. Users are JIT-created on first SSO login.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.users.map(u => {
+      const isSelf = currentUser && currentUser.id === u.id;
+      const isSystem = u.provider === 'system';
+      const disabled = !!u.disabled_at;
+      return `
+        <tr>
+          <td>${escapeHtml(u.email)}${isSelf ? ' <span class="muted">(you)</span>' : ''}</td>
+          <td>${escapeHtml(u.name || '—')}</td>
+          <td><span class="status-pill status-${u.role === 'admin' ? 'active' : 'inactive'}">${escapeHtml(u.role)}</span></td>
+          <td><span class="muted">${escapeHtml(u.provider)}</span></td>
+          <td>${u.agents_owned}</td>
+          <td class="muted">${escapeHtml(u.last_login_at || '—')}</td>
+          <td>${disabled
+            ? '<span class="status-pill status-inactive">disabled</span>'
+            : '<span class="status-pill status-active">active</span>'}</td>
+          <td class="actions">
+            ${isSystem || isSelf
+              ? '<span class="muted">—</span>'
+              : `<button class="ghost" data-user-role="${escapeHtml(u.id)}" data-target-role="${u.role === 'admin' ? 'user' : 'admin'}">
+                  ${u.role === 'admin' ? 'Demote to user' : 'Promote to admin'}
+                </button>
+                <button class="ghost" data-user-disable="${escapeHtml(u.id)}" data-target="${disabled ? 'false' : 'true'}">
+                  ${disabled ? 'Enable' : 'Disable'}
+                </button>`}
+          </td>
+        </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('[data-user-role]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.userRole;
+        const target = btn.dataset.targetRole;
+        if (!confirm(`Change this user's role to "${target}"? Their active sessions will be revoked.`)) return;
+        try {
+          await api(`/admin/users/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ role: target })
+          });
+          loadUsers();
+        } catch (e) {
+          console.error('change role failed:', e.message);
+          alert('Change role failed: ' + e.message);
+        }
+      });
+    });
+
+    tbody.querySelectorAll('[data-user-disable]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.userDisable;
+        const target = btn.dataset.target === 'true';
+        const verb = target ? 'Disable' : 'Enable';
+        if (!confirm(`${verb} this user?${target ? ' Their active sessions will be revoked.' : ''}`)) return;
+        try {
+          await api(`/admin/users/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ disabled: target })
+          });
+          loadUsers();
+        } catch (e) {
+          console.error(`${verb} failed:`, e.message);
+          alert(`${verb} failed: ` + e.message);
+        }
+      });
+    });
+  } catch (e) {
+    console.error('loadUsers failed:', e.message);
+    tbody.innerHTML = `<tr><td colspan="8" class="muted">Error: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+document.getElementById('usersRefreshBtn').addEventListener('click', loadUsers);
+
+// ─────────────────────────────────────── Webhooks (admin)
+
+const KNOWN_WEBHOOK_EVENTS = [
+  '*',
+  'agent.create', 'agent.update', 'agent.delete',
+  'mcp.create',   'mcp.update',   'mcp.delete',
+  'token.create', 'token.revoke',
+  'webhook.create', 'webhook.delete', 'webhook.pause', 'webhook.resume', 'webhook.test',
+  'user.update',  'user.login',     'user.logout'
+];
+
+async function loadWebhooks() {
+  const tbody = document.querySelector('#webhooksTable tbody');
+  tbody.innerHTML = `<tr><td colspan="7" class="muted">Loading…</td></tr>`;
+  try {
+    const data = await api('/admin/webhooks');
+    if (!data.webhooks.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">No webhooks registered.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.webhooks.map(w => {
+      const paused = !!w.paused_at;
+      return `
+        <tr>
+          <td>${escapeHtml(w.name)}</td>
+          <td class="muted" style="word-break: break-all">${escapeHtml(w.url)}</td>
+          <td class="muted" style="font-size: 11px">${(w.events || []).map(e => escapeHtml(e)).join(', ')}</td>
+          <td>${w.last_status ? `<span class="status-pill status-${w.last_status < 400 ? 'active' : 'inactive'}">${w.last_status}</span>` : '<span class="muted">—</span>'}
+              ${w.last_error ? `<div class="muted" style="font-size: 11px; margin-top: 4px">${escapeHtml(w.last_error)}</div>` : ''}</td>
+          <td>${w.failure_count || 0}<span class="muted"> / ${w.delivery_count || 0}</span></td>
+          <td>${paused
+            ? '<span class="status-pill status-inactive">paused</span>'
+            : '<span class="status-pill status-active">active</span>'}</td>
+          <td class="actions">
+            <button class="ghost" data-webhook-test="${escapeHtml(w.id)}" ${paused ? 'disabled title="resume first"' : ''}>Test</button>
+            <button class="ghost" data-webhook-pause="${escapeHtml(w.id)}" data-target="${paused ? 'false' : 'true'}">
+              ${paused ? 'Resume' : 'Pause'}
+            </button>
+            <button class="ghost" data-webhook-del="${escapeHtml(w.id)}">Delete</button>
+          </td>
+        </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('[data-webhook-test]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.webhookTest;
+        try {
+          await api(`/admin/webhooks/${encodeURIComponent(id)}/test`, { method: 'POST' });
+          setTimeout(loadWebhooks, 800);  // reload to show updated last_status
+        } catch (e) {
+          alert('Test fire failed: ' + e.message);
+        }
+      });
+    });
+
+    tbody.querySelectorAll('[data-webhook-pause]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.webhookPause;
+        const target = btn.dataset.target === 'true';
+        try {
+          await api(`/admin/webhooks/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ paused: target })
+          });
+          loadWebhooks();
+        } catch (e) {
+          alert((target ? 'Pause' : 'Resume') + ' failed: ' + e.message);
+        }
+      });
+    });
+
+    tbody.querySelectorAll('[data-webhook-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.webhookDel;
+        if (!confirm(`Delete this webhook? It cannot be undone.`)) return;
+        try {
+          await api(`/admin/webhooks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          loadWebhooks();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      });
+    });
+  } catch (e) {
+    console.error('loadWebhooks failed:', e.message);
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">Error: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+const webhookAddModal = document.getElementById('webhookAddModal');
+const webhookAddForm  = document.getElementById('webhookAddForm');
+const webhookAddError = document.getElementById('webhookAddError');
+const webhookSecretModal = document.getElementById('webhookSecretModal');
+const webhookSecretValue = document.getElementById('webhookSecretValue');
+
+function renderWebhookEventChecklist() {
+  const wrap = document.getElementById('webhookEventsList');
+  wrap.innerHTML = KNOWN_WEBHOOK_EVENTS.map(e => `
+    <label>
+      <input type="checkbox" name="events" value="${escapeHtml(e)}" ${e === '*' ? 'checked' : ''} />
+      ${escapeHtml(e)}
+    </label>
+  `).join('');
+}
+
+document.getElementById('webhookAddBtn').addEventListener('click', () => {
+  webhookAddError.textContent = '';
+  webhookAddForm.reset();
+  renderWebhookEventChecklist();
+  webhookAddModal.hidden = false;
+});
+
+webhookAddForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  webhookAddError.textContent = '';
+  const fd = new FormData(webhookAddForm);
+  const events = fd.getAll('events');
+  if (!events.length) {
+    webhookAddError.textContent = 'Select at least one event (or "*" for all).';
+    return;
+  }
+  try {
+    const res = await api('/admin/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: fd.get('name'),
+        url:  fd.get('url'),
+        events
+      })
+    });
+    webhookAddModal.hidden = true;
+    webhookSecretValue.textContent = res.secret;
+    webhookSecretModal.hidden = false;
+    loadWebhooks();
+  } catch (err) {
+    console.error('create webhook failed:', err.message);
+    webhookAddError.textContent = err.message;
+  }
+});
+
+document.getElementById('webhookRefreshBtn').addEventListener('click', loadWebhooks);
 
 // ─────────────────────────────────────── Per-agent detail modal
 

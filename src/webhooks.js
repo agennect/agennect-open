@@ -39,8 +39,9 @@ function subscriptionMatches(events, eventName) {
 export function dispatchEvent(eventName, payload) {
   let webhooks;
   try {
+    // Skip paused subscribers — their row stays but no delivery happens.
     webhooks = db.prepare(
-      `SELECT id, name, url, events FROM webhooks`
+      `SELECT id, name, url, events FROM webhooks WHERE paused_at IS NULL`
     ).all();
   } catch (e) {
     console.error('dispatchEvent: webhook lookup failed:', e.message);
