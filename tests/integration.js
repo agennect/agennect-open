@@ -439,6 +439,52 @@ async function main() {
     }
   });
 
+  await block('BLOCK 7.9 — Users, SSO scaffolding, ownership', async () => {
+    // /auth/config returns the active provider
+    const cfg = await http('GET', '/auth/config');
+    check('GET /auth/config → 200', cfg.status === 200);
+    check('config has provider field', typeof cfg.body?.provider === 'string');
+
+    // /auth/login input validation
+    const noBody = await http('POST', '/auth/login', { body: {} });
+    check('POST /auth/login without id_token → 400', noBody.status === 400);
+
+    const badToken = await http('POST', '/auth/login', { body: { id_token: 'not-a-real-jwt' } });
+    check('POST /auth/login with bad token → 401', badToken.status === 401);
+
+    // /auth/me with the bootstrap token: token present, user null (env-bootstrap)
+    const me = await http('GET', '/auth/me', { admin: true });
+    check('GET /auth/me (bootstrap token) → 200', me.status === 200);
+    check('me.token has admin scope', me.body?.token?.scope === 'admin');
+    check('me.user is null for env-bootstrap', me.body?.user === null);
+
+    // System user owns seeded/legacy resources. Create one via bootstrap →
+    // it should also be system-owned since bootstrap has no user_id.
+    const created = await http('POST', '/agents', {
+      admin: true,
+      body: {
+        name: 'OwnershipProbe ' + Date.now(),
+        description: 'Created by integration tests to verify ownership stamping.',
+        provider: 'integration'
+      }
+    });
+    check('POST /agents (bootstrap) → 201', created.status === 201);
+    if (created.body?.id) {
+      const detail = await http('GET', `/agents/${created.body.id}`);
+      check('agent has owner_user_id', !!detail.body?.owner_user_id, `got ${detail.body?.owner_user_id}`);
+      check('owner is system user', detail.body?.owner_user_id === '00000000-0000-0000-0000-000000000001');
+
+      // Anonymous (no token) attempt to mutate → 401
+      const anonMut = await http('PUT', `/agents/${created.body.id}`, {
+        body: { description: 'should be rejected, not authenticated at all here.' }
+      });
+      check('anonymous PUT → 401', anonMut.status === 401);
+
+      // Cleanup
+      await http('DELETE', `/agents/${created.body.id}`, { admin: true });
+    }
+  });
+
   await block('BLOCK 7 — Dashboard', async () => {
     const d = await fetch(`${BASE}/dashboard`, {
       redirect: 'manual',

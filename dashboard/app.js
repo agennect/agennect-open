@@ -9,6 +9,12 @@ window.addEventListener('unhandledrejection', (e) => {
 
 const TOKEN_KEY = 'agennect_admin_token';
 
+// Current authenticated user, fetched from /auth/me on every token change.
+// null = not logged in (or token belongs to an env-bootstrap key with no user).
+let currentUser = null;
+let authConfig  = null;   // { provider, enabled, firebase?: { apiKey, projectId, authDomain } }
+let firebaseApp = null;   // lazily initialized Firebase app handle
+
 function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
 }
@@ -18,12 +24,13 @@ function setToken(t) {
   const cleaned = (t || '').replace(/^Bearer\s+/i, '').trim();
   if (cleaned) localStorage.setItem(TOKEN_KEY, cleaned);
   else localStorage.removeItem(TOKEN_KEY);
-  updateAdminUI();
-  // Tables embed per-row admin buttons at render time, so re-fetch them
-  // whenever admin state flips.
-  loadAgents();
-  loadMcp();
-  loadOverview();
+  // Refresh currentUser before re-rendering tables so row-level
+  // canMutate() decisions reflect the new identity.
+  refreshAuth().then(() => {
+    loadAgents();
+    loadMcp();
+    loadOverview();
+  });
 }
 
 function authHeaders() {
@@ -31,18 +38,69 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-function isAdmin() { return !!getToken(); }
+function isAuthed() { return !!getToken(); }
+
+// True only for env-bootstrap-style tokens (no user) OR users with role=admin.
+// Used to gate global-admin UI like the audit log link or "all rows are editable".
+function isAdmin() {
+  if (!isAuthed()) return false;
+  if (currentUser === null) return true;             // bootstrap token: no user, scope=admin
+  return currentUser?.role === 'admin';
+}
+
+// Can the current actor mutate this resource (agent or mcp row)?
+function canMutate(resource) {
+  if (isAdmin()) return true;
+  if (!currentUser) return false;
+  return resource && resource.owner_user_id === currentUser.id;
+}
 
 function updateAdminUI() {
+  // "Add" buttons are shown to any authenticated actor; row-level Edit/
+  // Deactivate visibility is computed per row by canMutate().
   document.querySelectorAll('.admin-only').forEach(el => {
-    el.hidden = !isAdmin();
+    el.hidden = !isAuthed();
   });
   const status = document.getElementById('tokenStatus');
   if (status) {
-    status.textContent = isAdmin()
+    status.textContent = isAuthed()
       ? '✓ Token saved — admin actions enabled.'
       : 'No token set. Admin actions are hidden.';
   }
+  renderAccountStatus();
+}
+
+async function refreshAuth() {
+  if (!isAuthed()) { currentUser = null; updateAdminUI(); return; }
+  try {
+    const me = await api('/auth/me');
+    currentUser = me?.user || null;
+  } catch (e) {
+    console.error('[auth] /auth/me failed; clearing token:', e.message);
+    localStorage.removeItem(TOKEN_KEY);
+    currentUser = null;
+  }
+  updateAdminUI();
+}
+
+function renderAccountStatus() {
+  const el = document.getElementById('accountStatus');
+  if (!el) return;
+  if (!isAuthed()) {
+    el.innerHTML = '<span class="muted">Not signed in. Use SSO below, or paste an API token in the next section.</span>';
+  } else if (currentUser) {
+    el.innerHTML = `Signed in as <strong>${escapeHtml(currentUser.email)}</strong>
+      <span class="status-pill status-active">${escapeHtml(currentUser.role)}</span>
+      <span class="muted">via ${escapeHtml(currentUser.provider)}</span>`;
+  } else {
+    el.innerHTML = `<span class="status-pill status-active">admin</span>
+      <span class="muted">authenticated via API token (no user record — env-bootstrap or service token)</span>`;
+  }
+  // Toggle sign-in / sign-out visibility
+  const inBtn  = document.getElementById('signInGoogleBtn');
+  const outBtn = document.getElementById('signOutBtn');
+  if (inBtn  && authConfig?.enabled) inBtn.hidden = isAuthed();
+  if (outBtn) outBtn.hidden = !isAuthed() || !currentUser;
 }
 
 async function api(path, opts = {}) {
@@ -183,7 +241,10 @@ async function loadAgents() {
   const tbody = document.querySelector('#agentsTable tbody');
   tbody.innerHTML = `<tr><td colspan="8" class="muted">Loading…</td></tr>`;
   try {
-    const data = await api('/agents?limit=100');
+    const mineBtn = document.getElementById('agentMineBtn');
+    const mineOnly = mineBtn?.dataset.on === 'true' && currentUser;
+    const url = mineOnly ? '/agents?limit=100&mine=true' : '/agents?limit=100';
+    const data = await api(url);
     if (!data.agents.length) {
       tbody.innerHTML = `<tr><td colspan="8" class="muted">No agents yet. Run npm run seed.</td></tr>`;
       return;
@@ -206,7 +267,7 @@ async function loadAgents() {
           <td>${latency}</td>
           <td class="actions">
             <a href="/agents/${encodeURIComponent(a.id)}/.well-known/agent.json" target="_blank">Card</a>
-            ${isAdmin()
+            ${canMutate(a)
               ? `<button class="ghost" data-edit-agent="${escapeHtml(a.id)}">Edit</button>
                  <button class="ghost" data-toggle-agent="${escapeHtml(a.id)}" data-target-status="${a.status === 'active' ? 'inactive' : 'active'}">${a.status === 'active' ? 'Deactivate' : 'Activate'}</button>`
               : ''}
@@ -308,6 +369,15 @@ document.getElementById('agentClearBtn').addEventListener('click', () => {
   loadAgents();
 });
 
+document.getElementById('agentMineBtn').addEventListener('click', (e) => {
+  const btn = e.currentTarget;
+  const on = btn.dataset.on !== 'true';
+  btn.dataset.on = String(on);
+  btn.textContent = on ? '✓ My agents only' : 'My agents only';
+  btn.classList.toggle('primary', on);
+  loadAgents();
+});
+
 // ─────────────────────────────────────── MCP
 
 async function loadMcp() {
@@ -330,7 +400,7 @@ async function loadMcp() {
         <td>${escapeHtml(s.author || '—')}</td>
         <td><span class="status-pill status-${escapeHtml(s.status)}">${escapeHtml(s.status)}</span></td>
         <td class="actions">
-          ${isAdmin()
+          ${canMutate(s)
             ? `<button class="ghost" data-edit-mcp="${escapeHtml(s.id)}">Edit</button>
                <button class="ghost" data-toggle-mcp="${escapeHtml(s.id)}" data-target-status="${s.status === 'active' ? 'inactive' : 'active'}">${s.status === 'active' ? 'Deactivate' : 'Activate'}</button>`
             : '<span class="muted">—</span>'}
@@ -689,6 +759,82 @@ mcpForm.addEventListener('submit', async (e) => {
   }
 });
 
+// ─────────────────────────────────────── SSO sign-in (provider-pluggable)
+
+async function loadAuthConfig() {
+  try {
+    authConfig = await api('/auth/config');
+  } catch (e) {
+    console.error('[auth] config fetch failed:', e.message);
+    authConfig = { provider: 'unknown', enabled: false };
+  }
+  const block = document.getElementById('ssoBlock');
+  if (block) block.hidden = !authConfig.enabled;
+  renderAccountStatus();
+}
+
+async function loadFirebase() {
+  if (firebaseApp) return firebaseApp;
+  if (!authConfig?.firebase?.apiKey) throw new Error('Firebase config missing');
+
+  // Load the modular SDK on-demand from the official CDN.
+  const ver = '10.14.1';
+  const appMod  = await import(`https://www.gstatic.com/firebasejs/${ver}/firebase-app.js`);
+  const authMod = await import(`https://www.gstatic.com/firebasejs/${ver}/firebase-auth.js`);
+
+  const app = appMod.initializeApp({
+    apiKey:     authConfig.firebase.apiKey,
+    authDomain: authConfig.firebase.authDomain,
+    projectId:  authConfig.firebase.projectId
+  });
+  firebaseApp = { app, appMod, authMod };
+  return firebaseApp;
+}
+
+async function signInWithGoogle() {
+  const err = document.getElementById('ssoError');
+  if (err) err.textContent = '';
+  try {
+    const fb = await loadFirebase();
+    const auth = fb.authMod.getAuth(fb.app);
+    const provider = new fb.authMod.GoogleAuthProvider();
+    const cred = await fb.authMod.signInWithPopup(auth, provider);
+    const idToken = await cred.user.getIdToken();
+
+    const exchange = await api('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ id_token: idToken })
+    });
+
+    // Persist the registry session token (NOT the Firebase token) and
+    // refresh the UI. From this point on every request goes out as
+    // Bearer <exchange.token>.
+    setToken(exchange.token);
+  } catch (e) {
+    console.error('[sso] Google sign-in failed:', e.message);
+    if (err) err.textContent = e.message;
+  }
+}
+
+async function signOut() {
+  try {
+    await api('/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error('[sso] /auth/logout failed:', e.message);
+  }
+  // Also sign out client-side if we ever loaded Firebase.
+  try {
+    if (firebaseApp) {
+      const auth = firebaseApp.authMod.getAuth(firebaseApp.app);
+      await firebaseApp.authMod.signOut(auth);
+    }
+  } catch (e) { /* tolerate */ }
+  setToken('');
+}
+
+document.getElementById('signInGoogleBtn').addEventListener('click', signInWithGoogle);
+document.getElementById('signOutBtn').addEventListener('click', signOut);
+
 // ─────────────────────────────────────── Settings
 
 document.getElementById('saveTokenBtn').addEventListener('click', () => {
@@ -743,7 +889,10 @@ document.getElementById('testTokenBtn').addEventListener('click', async () => {
 
 // ─────────────────────────────────────── Init
 
-updateAdminUI();
-loadOverview();
-loadAgents();
-loadMcp();
+(async function init() {
+  await loadAuthConfig();   // populates authConfig + toggles SSO UI
+  await refreshAuth();      // populates currentUser, calls updateAdminUI()
+  loadOverview();
+  loadAgents();
+  loadMcp();
+})().catch(e => console.error('[init] failed:', e.message));

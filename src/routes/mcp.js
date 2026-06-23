@@ -3,6 +3,20 @@ import { db } from '../db.js';
 import { requireScope } from '../auth.js';
 import { audit } from '../audit.js';
 import { McpCreateSchema, McpUpdateSchema, parseOrError } from '../validation.js';
+import { SYSTEM_USER_ID } from '../users.js';
+
+function requireOwnerOrAdmin(c, ownerUserId) {
+  if (c.get('isAdmin')) return null;
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Authentication required' }, 401);
+  if (!ownerUserId) {
+    return c.json({ error: 'Forbidden: resource has no owner; admin only' }, 403);
+  }
+  if (user.id !== ownerUserId) {
+    return c.json({ error: 'Forbidden: you do not own this resource' }, 403);
+  }
+  return null;
+}
 
 export const mcpRouter = new Hono();
 
@@ -108,13 +122,14 @@ mcpRouter.post('/', async (c) => {
 
   const id = `${slugify(body.name)}-${randomHex(2)}`;
   const tools = JSON.stringify(Array.isArray(body.tools) ? body.tools : []);
+  const ownerUserId = c.get('user')?.id || SYSTEM_USER_ID;
 
   try {
     db.prepare(
       `INSERT INTO mcp_servers
        (id, name, description, transport, config_url, package_url,
-        tools, category, author)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        tools, category, author, owner_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       body.name,
@@ -124,7 +139,8 @@ mcpRouter.post('/', async (c) => {
       body.package_url || null,
       tools,
       body.category || null,
-      body.author || null
+      body.author || null,
+      ownerUserId
     );
 
     audit(c, {
@@ -148,6 +164,9 @@ mcpRouter.put('/:id', async (c) => {
   const id = c.req.param('id');
   const existing = db.prepare(`SELECT * FROM mcp_servers WHERE id = ?`).get(id);
   if (!existing) return c.json({ error: 'MCP server not found' }, 404);
+
+  const ownerDenied = requireOwnerOrAdmin(c, existing.owner_user_id);
+  if (ownerDenied) return ownerDenied;
 
   let raw;
   try {
@@ -205,8 +224,13 @@ mcpRouter.delete('/:id', (c) => {
 
   try {
     const id = c.req.param('id');
-    const existing = db.prepare(`SELECT id, name, status FROM mcp_servers WHERE id = ?`).get(id);
+    const existing = db.prepare(
+      `SELECT id, name, status, owner_user_id FROM mcp_servers WHERE id = ?`
+    ).get(id);
     if (!existing) return c.json({ error: 'MCP server not found' }, 404);
+
+    const ownerDenied = requireOwnerOrAdmin(c, existing.owner_user_id);
+    if (ownerDenied) return ownerDenied;
 
     db.prepare(
       `UPDATE mcp_servers SET status = 'inactive' WHERE id = ?`
