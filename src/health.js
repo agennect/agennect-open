@@ -15,7 +15,8 @@ async function checkAll() {
   const agents = db.prepare(
     `SELECT id, endpoint_url FROM agents
      WHERE status != 'inactive'
-       AND endpoint_url IS NOT NULL`
+       AND endpoint_url IS NOT NULL
+       AND COALESCE(is_builtin, 0) = 0`
   ).all();
 
   for (const agent of agents) {

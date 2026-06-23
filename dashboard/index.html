@@ -330,6 +330,30 @@
     </div>
   </div>
 
+  <!-- Connect chat: floating launcher + panel -->
+  <button id="connectChatBtn" class="connect-fab" title="Chat with Connect, the onboarding agent" aria-label="Open Connect chat">
+    💬
+    <span class="connect-fab-label">Connect</span>
+  </button>
+
+  <aside id="connectChatPanel" class="connect-panel" hidden>
+    <header class="connect-head">
+      <div>
+        <strong>Connect</strong>
+        <span class="muted" id="connectSessionLabel"></span>
+      </div>
+      <div class="connect-head-actions">
+        <button class="ghost" id="connectNewSessionBtn" title="New session">↻</button>
+        <button class="ghost" id="connectCloseBtn" title="Close">✕</button>
+      </div>
+    </header>
+    <div id="connectMessages" class="connect-messages"></div>
+    <form id="connectInputForm" class="connect-input">
+      <input type="text" id="connectInput" autocomplete="off" placeholder="Type a reply (e.g. 'agent')…" />
+      <button class="primary" type="submit">Send</button>
+    </form>
+  </aside>
+
   <script src="/dashboard/app.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { db } from '../db.js';
 import { ReportSchema, parseOrError } from '../validation.js';
+import { CONNECT_AGENT_ID, handle as connectHandle } from '../connect-agent.js';
 
 export const invokeRouter = new Hono();
 
@@ -95,12 +96,65 @@ invokeRouter.post('/:id/tasks', async (c) => {
 
   const agent = db.prepare(
     `SELECT id, name, status, endpoint_url, auth_type, auth_header,
-            proxy_enabled, proxy_timeout_ms
+            proxy_enabled, proxy_timeout_ms, is_builtin
      FROM agents WHERE id = ?`
   ).get(agentId);
 
   if (!agent) {
     return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  // Built-in agents: dispatch to the in-process handler instead of proxying.
+  if (agent.is_builtin) {
+    let task;
+    try {
+      task = await c.req.json();
+    } catch (e) {
+      console.error('POST /:id/tasks (builtin) body parse failed:', e.message);
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    const totalStart = Date.now();
+    let resp;
+    try {
+      if (agentId === CONNECT_AGENT_ID) {
+        resp = await connectHandle({ c, agent, task });
+      } else {
+        return c.json({ error: `Unknown built-in agent: ${agentId}` }, 404);
+      }
+    } catch (e) {
+      console.error(`Built-in agent ${agentId} handler threw:`, e.message);
+      return c.json({ error: e.message }, 500);
+    }
+
+    const invId = crypto.randomUUID();
+    try {
+      db.prepare(`
+        INSERT INTO invocations
+          (id, agent_id, caller, status, latency_ms, error_msg,
+           payload_size, response_size, mode)
+        VALUES (?, ?, ?, 'success', ?, NULL, ?, ?, 'proxy')
+      `).run(
+        invId, agentId,
+        c.req.header('X-Caller-ID') || c.req.header('X-Forwarded-For') || 'builtin',
+        Date.now() - totalStart,
+        JSON.stringify(task).length,
+        JSON.stringify(resp.body).length
+      );
+    } catch (e) {
+      console.error('builtin invocation log failed:', e.message);
+    }
+
+    return c.json({
+      ...resp.body,
+      _agennect: {
+        invocation_id: invId,
+        agent_id: agentId,
+        latency_ms: Date.now() - totalStart,
+        mode: 'builtin',
+        proxied_at: new Date().toISOString()
+      }
+    }, resp.status || 200);
   }
 
   if (!agent.proxy_enabled) {

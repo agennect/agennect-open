@@ -12,6 +12,7 @@ import { authRouter } from './routes/auth.js';
 import { startHealthChecks } from './health.js';
 import { bootstrapEnvToken, verifyToken, scopeSatisfies } from './auth.js';
 import { findUserById } from './users.js';
+import { bootstrapConnectAgent } from './connect-agent.js';
 import { db } from './db.js';
 import { logger, runWithRequestContext } from './logger.js';
 
@@ -74,8 +75,9 @@ app.use('*', async (c, next) => {
 
 app.options('*', (c) => c.text('', 204));
 
-// ── Auth: parse Bearer token, look it up, set context ──────────────────────
+// ── Bootstrap built-ins ────────────────────────────────────────────────────
 bootstrapEnvToken();
+bootstrapConnectAgent();
 
 app.use('*', async (c, next) => {
   const header = c.req.header('Authorization') || '';

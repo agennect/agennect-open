@@ -1135,6 +1135,96 @@ document.getElementById('testTokenBtn').addEventListener('click', async () => {
   }
 });
 
+// ─────────────────────────────────────── Connect chat
+
+const CONNECT_SESSION_KEY = 'agennect_connect_session';
+const connectPanel    = document.getElementById('connectChatPanel');
+const connectMessages = document.getElementById('connectMessages');
+const connectInput    = document.getElementById('connectInput');
+const connectForm     = document.getElementById('connectInputForm');
+const connectLabel    = document.getElementById('connectSessionLabel');
+
+function connectSessionId() {
+  let s = sessionStorage.getItem(CONNECT_SESSION_KEY);
+  if (!s) {
+    s = 'sess-' + crypto.randomUUID().slice(0, 12);
+    sessionStorage.setItem(CONNECT_SESSION_KEY, s);
+  }
+  return s;
+}
+
+function renderConnectSessionLabel() {
+  connectLabel.textContent = ' · ' + connectSessionId().slice(-6);
+}
+
+function appendConnectMsg(role, text) {
+  const el = document.createElement('div');
+  el.className = 'connect-msg ' + role;
+  el.textContent = text;
+  connectMessages.appendChild(el);
+  connectMessages.scrollTop = connectMessages.scrollHeight;
+}
+
+async function openConnectChat() {
+  connectPanel.hidden = false;
+  renderConnectSessionLabel();
+  if (!connectMessages.childElementCount) {
+    appendConnectMsg('system', 'Talking to Connect — the built-in onboarding agent.');
+    // Send an empty opener so the bot introduces itself.
+    await sendConnect('');
+  }
+  setTimeout(() => connectInput.focus(), 20);
+}
+
+function closeConnectChat() {
+  connectPanel.hidden = true;
+}
+
+async function sendConnect(userText) {
+  if (userText) appendConnectMsg('user', userText);
+  try {
+    const res = await fetch('/agents/agennect-connect/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        id: connectSessionId(),
+        message: { role: 'user', parts: [{ type: 'text', text: userText || '' }] },
+        context: { session_id: connectSessionId() }
+      }),
+      signal: AbortSignal.timeout(30000)
+    });
+    const data = await res.json();
+    const replyText = data?.result?.parts?.[0]?.text || data?.error || '(no reply)';
+    appendConnectMsg('bot', replyText);
+    if (data?.status?.state === 'completed') {
+      appendConnectMsg('system', 'Session ended. Click ↻ to start a new one.');
+    }
+  } catch (e) {
+    console.error('[connect] send failed:', e.message);
+    appendConnectMsg('system', 'Error: ' + e.message);
+  }
+}
+
+document.getElementById('connectChatBtn').addEventListener('click', openConnectChat);
+document.getElementById('connectCloseBtn').addEventListener('click', closeConnectChat);
+document.getElementById('connectNewSessionBtn').addEventListener('click', async () => {
+  sessionStorage.removeItem(CONNECT_SESSION_KEY);
+  connectMessages.innerHTML = '';
+  await openConnectChat();
+});
+
+connectForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = connectInput.value.trim();
+  if (!text) return;
+  connectInput.value = '';
+  await sendConnect(text);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !connectPanel.hidden) closeConnectChat();
+});
+
 // ─────────────────────────────────────── Init
 
 (async function init() {
