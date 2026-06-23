@@ -51,6 +51,7 @@
         <input type="text" id="agentSearch" placeholder="Semantic search: e.g. data governance, pipeline monitoring" />
         <button id="agentSearchBtn">Search</button>
         <button id="agentClearBtn" class="ghost">Clear</button>
+        <button id="agentMineBtn" class="ghost admin-only" hidden data-on="false">My agents only</button>
         <button id="agentAddBtn" class="primary admin-only" hidden>+ Add agent</button>
       </div>
       <table class="data" id="agentsTable">
@@ -103,15 +104,31 @@
     <!-- SETTINGS -->
     <section id="tab-settings" class="panel">
       <div class="block">
-        <h2>Admin token</h2>
+        <h2>Account</h2>
+        <div id="accountStatus" class="hint">Loading…</div>
+        <div id="ssoBlock" hidden>
+          <p class="hint" style="margin-top:10px">
+            Sign in with your identity provider — your session token is stored
+            only in your browser's localStorage.
+          </p>
+          <div class="settings-row" id="ssoButtons">
+            <button id="signInGoogleBtn" class="primary" hidden>Sign in with Google</button>
+            <button id="signOutBtn" class="ghost" hidden>Sign out</button>
+          </div>
+        </div>
+        <p id="ssoError" class="error"></p>
+      </div>
+
+      <div class="block">
+        <h2>API token (advanced)</h2>
         <p class="hint">
-          Paste the raw value of <code>ADMIN_TOKEN</code> from your <code>.env</code>
+          Paste a token minted via <code>POST /admin/tokens</code>, or the raw
+          <code>ADMIN_TOKEN</code> from your <code>.env</code>
           (default: <code>change-me-before-deploy</code>). Do <strong>not</strong>
           include the word "Bearer" — the dashboard adds it for you.
-          Stored only in your browser's localStorage.
         </p>
         <div class="settings-row">
-          <input type="password" id="adminTokenInput" placeholder="raw ADMIN_TOKEN value" autocomplete="off" />
+          <input type="password" id="adminTokenInput" placeholder="raw token value" autocomplete="off" />
           <button id="saveTokenBtn" class="primary">Save</button>
           <button id="testTokenBtn" class="ghost">Test</button>
           <button id="clearTokenBtn" class="ghost">Clear</button>

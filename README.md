@@ -146,6 +146,67 @@ mutation that triggered the event always succeeds even if delivery fails.
 
 ---
 
+## Users, SSO & ownership
+
+agennect-open supports two parallel ways to authenticate, both
+issuing the same kind of bearer token:
+
+1. **API tokens** — minted via `POST /admin/tokens`, used by CI bots,
+   service accounts, and the dashboard's "paste a token" flow. These
+   have a `scope` (`read | write | admin`) but no user identity.
+2. **User sessions via external SSO** — humans sign in through an
+   external identity provider (Firebase Auth today; pluggable).
+   The dashboard exchanges the provider ID token for a session token
+   tied to a row in the `users` table.
+
+### Ownership model
+
+Every `agent` and `mcp_server` row has an `owner_user_id`. Mutation
+rules are:
+
+| Actor                              | Mutate own resource | Mutate others' |
+|------------------------------------|---------------------|----------------|
+| `role = 'user'`                    | ✓                   | ✗ (403)        |
+| `role = 'admin'`                   | ✓                   | ✓              |
+| env-bootstrap (no user record)     | ✓                   | ✓              |
+
+All pre-Sprint-5 rows are owned by a synthetic `system` user; only
+admins can mutate them until reassigned.
+
+### Setting up Firebase Auth
+
+1. Create a Firebase project, enable Google sign-in (or any provider).
+2. Copy the project's web API key + project id into `.env`:
+   ```
+   AUTH_PROVIDER=firebase
+   FIREBASE_PROJECT_ID=my-project
+   FIREBASE_API_KEY=AIza...
+   ADMIN_EMAILS=alice@example.com,bob@example.com
+   ```
+3. Add your registry URL (e.g. `http://localhost:3000`) to the Firebase
+   project's "Authorized domains" list (Authentication → Settings).
+4. Restart the server. Open the dashboard → Settings tab → **Sign in
+   with Google**.
+5. First login of an email listed in `ADMIN_EMAILS` provisions an admin
+   user; everyone else gets the `user` role.
+
+### Adding another provider
+
+Implement `verifyIdToken(idToken)` in `src/auth-providers/<name>.js`,
+register it in `src/auth-providers/index.js`, then point
+`AUTH_PROVIDER` at it. The rest of the codebase doesn't change.
+
+### Auth endpoints
+
+| Method | Path                | Description                                |
+|--------|---------------------|--------------------------------------------|
+| GET    | `/auth/config`      | Public client config for the active provider |
+| POST   | `/auth/login`       | `{ id_token }` → session token + user      |
+| GET    | `/auth/me`          | Current token + user                       |
+| POST   | `/auth/logout`      | Revoke the current session token           |
+
+---
+
 ## Authentication & authorization
 
 Every write endpoint requires a Bearer token. Tokens live in the `tokens`

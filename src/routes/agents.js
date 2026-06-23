@@ -5,6 +5,22 @@ import { generateAgentCard } from '../a2a.js';
 import { requireScope } from '../auth.js';
 import { audit } from '../audit.js';
 import { AgentCreateSchema, AgentUpdateSchema, parseOrError } from '../validation.js';
+import { SYSTEM_USER_ID } from '../users.js';
+
+// Returns null when the actor may mutate this owner's resource;
+// returns a Hono Response (401/403) otherwise.
+function requireOwnerOrAdmin(c, ownerUserId) {
+  if (c.get('isAdmin')) return null;
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Authentication required' }, 401);
+  if (!ownerUserId) {
+    return c.json({ error: 'Forbidden: resource has no owner; admin only' }, 403);
+  }
+  if (user.id !== ownerUserId) {
+    return c.json({ error: 'Forbidden: you do not own this resource' }, 403);
+  }
+  return null;
+}
 
 export const agentsRouter = new Hono();
 
@@ -86,6 +102,7 @@ async function storeEmbedding(agentId, text) {
 agentsRouter.get('/', (c) => {
   try {
     const { status, protocol, hosting } = c.req.query();
+    const mine = c.req.query('mine') === 'true';
     const page = Math.max(1, parseInt(c.req.query('page') || '1'));
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
     const offset = (page - 1) * limit;
@@ -95,6 +112,12 @@ agentsRouter.get('/', (c) => {
     if (status) { where.push('status = ?'); params.push(status); }
     if (hosting) { where.push('hosting = ?'); params.push(hosting); }
     if (protocol) { where.push("protocols LIKE ?"); params.push(`%"${protocol}"%`); }
+    if (mine) {
+      const user = c.get('user');
+      if (!user) return c.json({ error: '?mine=true requires authentication' }, 401);
+      where.push('owner_user_id = ?');
+      params.push(user.id);
+    }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -249,13 +272,16 @@ agentsRouter.post('/', async (c) => {
   const id = `${slugify(body.name)}-${randomHex(2)}`;
   const protocols = JSON.stringify(body.protocols || ['A2A']);
   const tags = JSON.stringify(body.tags || []);
+  // Stamp owner: the logged-in user, or the synthetic system user for
+  // anonymous/env-bootstrap callers so the ownership column is never NULL.
+  const ownerUserId = c.get('user')?.id || SYSTEM_USER_ID;
 
   try {
     db.prepare(
       `INSERT INTO agents
        (id, name, description, provider, version, protocols,
-        endpoint_url, auth_type, auth_header, hosting, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        endpoint_url, auth_type, auth_header, hosting, tags, owner_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       body.name,
@@ -267,7 +293,8 @@ agentsRouter.post('/', async (c) => {
       body.auth_type || 'none',
       body.auth_header || null,
       body.hosting || 'referenced',
-      tags
+      tags,
+      ownerUserId
     );
 
     const caps = Array.isArray(body.capabilities) ? body.capabilities : [];
@@ -313,6 +340,9 @@ agentsRouter.put('/:id', async (c) => {
   const id = c.req.param('id');
   const existing = db.prepare(`SELECT * FROM agents WHERE id = ?`).get(id);
   if (!existing) return c.json({ error: 'Agent not found' }, 404);
+
+  const ownerDenied = requireOwnerOrAdmin(c, existing.owner_user_id);
+  if (ownerDenied) return ownerDenied;
 
   let raw;
   try {
@@ -393,8 +423,13 @@ agentsRouter.delete('/:id', (c) => {
 
   const id = c.req.param('id');
   try {
-    const existing = db.prepare(`SELECT id, name, status FROM agents WHERE id = ?`).get(id);
+    const existing = db.prepare(
+      `SELECT id, name, status, owner_user_id FROM agents WHERE id = ?`
+    ).get(id);
     if (!existing) return c.json({ error: 'Agent not found' }, 404);
+
+    const ownerDenied = requireOwnerOrAdmin(c, existing.owner_user_id);
+    if (ownerDenied) return ownerDenied;
 
     db.prepare(
       `UPDATE agents SET status = 'inactive', updated_at = datetime('now')

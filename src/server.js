@@ -8,8 +8,10 @@ import { invokeRouter } from './routes/invoke.js';
 import { metricsRouter } from './routes/metrics.js';
 import { adminRouter } from './routes/admin.js';
 import { metaRouter } from './routes/meta.js';
+import { authRouter } from './routes/auth.js';
 import { startHealthChecks } from './health.js';
 import { bootstrapEnvToken, verifyToken, scopeSatisfies } from './auth.js';
+import { findUserById } from './users.js';
 import { db } from './db.js';
 
 const app = new Hono();
@@ -54,11 +56,22 @@ app.use('*', async (c, next) => {
   const header = c.req.header('Authorization') || '';
   const match = header.match(/^Bearer\s+(.+)$/i);
   const token = match ? verifyToken(match[1]) : null;
+  const user  = token?.user_id ? findUserById(token.user_id) : null;
+
   c.set('token', token);
+  c.set('user',  user);
   c.set('scope', token?.scope || null);
-  // Backward compat with the old `isAdmin` flag used by some routes:
-  // any write-capable token counts as admin for the dashboard's purposes.
-  c.set('isAdmin', token ? scopeSatisfies(token.scope, 'write') : false);
+
+  // `isAdmin` now means "globally privileged":
+  //   - env-bootstrap (no user) with admin scope, OR
+  //   - a logged-in user whose role is 'admin'.
+  // Regular write-scope users do NOT see admin UI.
+  const isGlobalAdmin = token
+    ? (!token.user_id && scopeSatisfies(token.scope, 'admin'))
+      || (user?.role === 'admin')
+    : false;
+  c.set('isAdmin', isGlobalAdmin);
+
   await next();
 });
 
@@ -70,6 +83,7 @@ app.route('/v1/agents',  agentsRouter);
 app.route('/v1/mcp',     mcpRouter);
 app.route('/v1/metrics', metricsRouter);
 app.route('/v1/admin',   adminRouter);
+app.route('/v1/auth',    authRouter);
 
 // Top-level aliases — kept for backward compatibility with existing
 // clients (the dashboard, the seed script, and earlier README examples).
@@ -79,6 +93,7 @@ app.route('/agents',  agentsRouter);
 app.route('/mcp',     mcpRouter);
 app.route('/metrics', metricsRouter);
 app.route('/admin',   adminRouter);
+app.route('/auth',    authRouter);
 
 // Meta: /openapi.json + /openapi.yaml
 app.route('/', metaRouter);
