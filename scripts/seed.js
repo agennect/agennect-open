@@ -49,7 +49,9 @@ const agents = [
   provider: "AgentMesh",
   protocols: ["A2A", "REST"],
   hosting: "referenced",
-  auth_type: "api_key",
+  endpoint_url: "https://app.agentmesh.link",
+auth_type: "apikey",
+auth_header: "X-Agent-Key",
   capabilities: ["Agent Discovery", "Capability Discovery", "A2A Communication", "Task Routing", "Agent Orchestration", "Inter-Agent Messaging", "Knowledge Transfer", "Reusable Knowledge", "Agent Collaboration", "API Integration"],
   tags: ["agents", "a2a", "orchestration", "knowledge", "discovery"]
 }
