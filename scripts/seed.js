@@ -43,7 +43,18 @@ const agents = [
     auth_type: "none",
     capabilities: ["Onboarding", "Validation", "A2A", "Registry", "Agent Cards"],
     tags: ["meta", "onboarding"]
-  }
+  },{
+  name: "AgentMesh",
+  description: "Infrastructure and discovery layer for AI agents. Enables agents to discover other agents and capabilities, route tasks to specialized agents, exchange messages, and transfer reusable knowledge through machine-readable APIs.",
+  provider: "AgentMesh",
+  protocols: ["A2A", "REST"],
+  hosting: "referenced",
+  endpoint_url: "https://app.agentmesh.link",
+auth_type: "apikey",
+auth_header: "X-Agent-Key",
+  capabilities: ["Agent Discovery", "Capability Discovery", "A2A Communication", "Task Routing", "Agent Orchestration", "Inter-Agent Messaging", "Knowledge Transfer", "Reusable Knowledge", "Agent Collaboration", "API Integration"],
+  tags: ["agents", "a2a", "orchestration", "knowledge", "discovery"]
+}
 ];
 
 const mcpServers = [
