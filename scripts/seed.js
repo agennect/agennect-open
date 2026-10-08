@@ -72,6 +72,21 @@ const mcpServers = [
     ]
   },
   {
+    name: "Tale",
+    description: "Self-hosted team workspace exposing knowledge retrieval and automation authoring, validation, and deployment through MCP. Connect to your own Tale deployment over HTTPS POST with a Bearer API key and X-Organization-Slug header. Community software is MIT licensed; infrastructure and model usage have separate costs.",
+    transport: "http",
+    config_url: "https://docs.tale.dev/develop/mcp-endpoint",
+    package_url: "https://github.com/tale-project/tale",
+    category: "devtools",
+    author: "Ruler GmbH",
+    tools: [
+      { name: "get_knowledge", description: "Retrieve passages from organization documents and crawled web pages" },
+      { name: "get_docs", description: "Read the deployment-specific automation authoring reference" },
+      { name: "validate_automation", description: "Validate an automation document without saving it" },
+      { name: "run_automation", description: "Run an unsaved automation against deterministic mocks" }
+    ]
+  },
+  {
     name: "BigQuery MCP",
     description: "Execute analytical queries in BigQuery with GCP authentication. Supports large dataset operations and ML model inference.",
     transport: "http",
